@@ -17,7 +17,8 @@ use std::time::Instant;
 
 fn media(name: &str, mb: f64, mbps: f64, codec: &str, secs: f64) -> MediaInfo {
     MediaInfo {
-        path: PathBuf::from(format!("E:\\Po\\folder\\{name}")),
+        // Forward slashes so `file_name()` behaves the same on every platform.
+        path: PathBuf::from(format!("E:/Po/folder/{name}")),
         size_bytes: (mb * 1024.0 * 1024.0) as u64,
         duration_secs: secs,
         bitrate_bps: (mbps * 1_000_000.0) as u64,

@@ -29,10 +29,10 @@ jobs:
             target: i686-pc-windows-msvc
             platform: windows-x86
           # macOS (Apple Silicon + Intel)
-          - os: macos-14
+          - os: macos-latest
             target: aarch64-apple-darwin
             platform: macos-arm64
-          - os: macos-14
+          - os: macos-15-intel
             target: x86_64-apple-darwin
             platform: macos-x64
           # Linux (Debian, Ubuntu, Arch Linux share the same glibc binary)
