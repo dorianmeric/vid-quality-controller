@@ -1,1 +1,4 @@
 /target
+/reports
+#/config.json
+/dist
