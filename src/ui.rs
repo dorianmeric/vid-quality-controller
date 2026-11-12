@@ -659,9 +659,11 @@ fn draw_encode_panel(f: &mut Frame, area: Rect, app: &App) {
         match slot.id {
             Some(_) => {
                 let pct = slot.frac * 100.0;
-                let saved = if slot.out_bytes > 0 && slot.src_bytes > 0 {
+                // Bytes written so far, as a share of the original file size.
+                // (Not the saving: 19% of source means 81% smaller.)
+                let output_share = if slot.out_bytes > 0 && slot.src_bytes > 0 {
                     format!(
-                        "{:.0}% of source",
+                        "{:.0}%",
                         slot.out_bytes as f64 * 100.0 / slot.src_bytes as f64
                     )
                 } else {
@@ -674,7 +676,7 @@ fn draw_encode_panel(f: &mut Frame, area: Rect, app: &App) {
                     None => "estimating…".to_string(),
                 };
                 let full = format!(
-                    "filename: {} · percent done: {:.0}% · speed: {:.2}x · position: {position} / {length} · eta: {eta} · space saved: {saved}",
+                    "filename: {} · percent done: {:.0}% · speed: {:.2}x · position: {position} / {length} · eta: {eta} · size: {output_share} of orig",
                     truncate(&slot.name, 34),
                     pct,
                     slot.speed,
@@ -686,7 +688,7 @@ fn draw_encode_panel(f: &mut Frame, area: Rect, app: &App) {
                     full
                 } else {
                     let compact = format!(
-                        "{} · {:.0}% · {:.2}x · {position}/{length} · eta: {eta} · {saved}",
+                        "{} · {:.0}% · {:.2}x · {position}/{length} · eta: {eta} · size: {output_share} of orig",
                         truncate(&slot.name, 28),
                         pct,
                         slot.speed,
