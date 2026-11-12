@@ -220,7 +220,7 @@ fn draw_review_body(f: &mut Frame, area: Rect, app: &mut App) {
     f.render_widget(block, area);
 
     let widths = [
-        Constraint::Length(36),
+        Constraint::Length(100),
         Constraint::Length(10),
         Constraint::Length(4),
         Constraint::Length(7),
@@ -228,7 +228,7 @@ fn draw_review_body(f: &mut Frame, area: Rect, app: &mut App) {
         Constraint::Length(8),
         Constraint::Length(7),
         Constraint::Length(9),
-        Constraint::Length(24),
+        Constraint::Length(30),
     ];
     let header = Row::new(vec![
         "file", "resolution", "fps", "codec", "bitrate", "size", "length", "quality", "folder",
@@ -277,7 +277,7 @@ fn draw_review_body(f: &mut Frame, area: Rect, app: &mut App) {
                 Cell::from(Line::from(vec![
                     flag,
                     Span::raw(" "),
-                    Span::styled(truncate(&info.name(), 33), style),
+                    Span::styled(truncate(&info.name(), 50), style),
                 ])),
                 Cell::from(fmt::resolution(info.width, info.height)),
                 Cell::from(fmt::fps(info.fps)),
@@ -287,7 +287,7 @@ fn draw_review_body(f: &mut Frame, area: Rect, app: &mut App) {
                 Cell::from(fmt::duration(info.duration_secs)),
                 Cell::from(quality),
                 Cell::from(Span::styled(
-                    truncate(&info.folder(), 23),
+                    truncate(&info.folder(), 150),
                     Style::new().fg(Color::Rgb(110, 110, 120)),
                 )),
             ])

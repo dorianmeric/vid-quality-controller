@@ -38,8 +38,7 @@ cargo build --release
 | container | mp4/m4v/mov stay mp4, mkv/webm stay mkv, everything else becomes mkv |
 
 ffmpeg is used as the encoder backend (`C:\P\ffmpeg\bin`, auto-detected, also
-found on `PATH`). HandBrake is not required — `HandBrakeCLI.exe` is not installed
-in `C:\P\HandBrake`, only the GUI, which cannot be driven from the command line.
+found on `PATH`).
 
 ## Keys
 
