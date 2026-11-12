@@ -9,6 +9,29 @@ cargo build --release
 .\target\release\vid-quality-controller.exe
 ```
 
+## Install
+
+Prebuilt binaries are attached to every release:
+
+| platform | file |
+|---|---|
+| Windows x64 | `vid-quality-controller-<ver>-windows-x64.zip` |
+| Windows x32 | `vid-quality-controller-<ver>-windows-x86.zip` |
+| macOS (Apple Silicon) | `vid-quality-controller-<ver>-macos-arm64.tar.gz` |
+| macOS (Intel) | `vid-quality-controller-<ver>-macos-x64.tar.gz` |
+| Linux (generic) | `vid-quality-controller-<ver>-linux-x64.tar.gz` |
+| Debian / Ubuntu | `vid-quality-controller_<ver>_amd64.deb` |
+| Arch Linux | `vid-quality-controller-<ver>-1-x86_64.pkg.tar.zst` |
+
+```bash
+sudo dpkg -i vid-quality-controller_0.1.0_amd64.deb   # Debian/Ubuntu
+sudo pacman -U vid-quality-controller-0.1.0-1-x86_64.pkg.tar.zst   # Arch
+```
+
+`ffmpeg` (with `libsvtav1`) is required at runtime and is declared as a package
+dependency: `apt install ffmpeg`, `pacman -S ffmpeg`, `brew install ffmpeg`.
+The app finds it on `PATH` automatically.
+
 ## What it does
 
 1. **Scan** — walks the target folder recursively and probes every video with

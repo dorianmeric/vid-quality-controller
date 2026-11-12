@@ -62,8 +62,8 @@ impl Default for Config {
             duration_tolerance_secs: 1.0,
             keep_backup: false,
             dry_run: false,
-            ffmpeg: PathBuf::from(r"C:\P\ffmpeg\bin\ffmpeg.exe"),
-            ffprobe: PathBuf::from(r"C:\P\ffmpeg\bin\ffprobe.exe"),
+            ffmpeg: default_tool("ffmpeg"),
+            ffprobe: default_tool("ffprobe"),
             ffmpeg_extra_args: Vec::new(),
             extensions: [
                 "mp4", "m4v", "mkv", "avi", "mov", "wmv", "ts", "webm", "flv", "mpg", "mpeg",
@@ -109,23 +109,23 @@ impl Config {
     /// Falls back to the known install dir, then to PATH.
     pub fn resolve_tools(&mut self) -> Option<String> {
         let mut notes = Vec::new();
-        match resolve_tool(&self.ffmpeg, "ffmpeg.exe") {
+        match resolve_tool(&self.ffmpeg, "ffmpeg") {
             Some(p) => {
                 if p != self.ffmpeg {
                     notes.push(format!("ffmpeg -> {}", p.display()));
                 }
                 self.ffmpeg = p;
             }
-            None => notes.push("ffmpeg.exe NOT FOUND".to_string()),
+            None => notes.push(format!("{} NOT FOUND", exe_name("ffmpeg"))),
         }
-        match resolve_tool(&self.ffprobe, "ffprobe.exe") {
+        match resolve_tool(&self.ffprobe, "ffprobe") {
             Some(p) => {
                 if p != self.ffprobe {
                     notes.push(format!("ffprobe -> {}", p.display()));
                 }
                 self.ffprobe = p;
             }
-            None => notes.push("ffprobe.exe NOT FOUND".to_string()),
+            None => notes.push(format!("{} NOT FOUND", exe_name("ffprobe"))),
         }
         if notes.is_empty() {
             None
@@ -170,22 +170,49 @@ impl Config {
     }
 }
 
-fn resolve_tool(preferred: &Path, exe: &str) -> Option<PathBuf> {
+fn resolve_tool(preferred: &Path, base: &str) -> Option<PathBuf> {
     if preferred.is_file() {
         return Some(preferred.to_path_buf());
     }
-    let fallback = Path::new(r"C:\P\ffmpeg\bin").join(exe);
-    if fallback.is_file() {
-        return Some(fallback);
+    let exe = exe_name(base);
+    // Well-known install location on Windows.
+    #[cfg(windows)]
+    {
+        let fallback = Path::new(r"C:\P\ffmpeg\bin").join(&exe);
+        if fallback.is_file() {
+            return Some(fallback);
+        }
     }
     // Search PATH.
     if let Some(paths) = std::env::var_os("PATH") {
         for dir in std::env::split_paths(&paths) {
-            let candidate = dir.join(exe);
+            let candidate = dir.join(&exe);
             if candidate.is_file() {
                 return Some(candidate);
             }
         }
     }
     None
+}
+
+/// `ffmpeg` on unix, `ffmpeg.exe` on Windows.
+fn exe_name(base: &str) -> String {
+    if cfg!(windows) {
+        format!("{base}.exe")
+    } else {
+        base.to_string()
+    }
+}
+
+/// Default tool path: the known Windows install dir, otherwise the bare name
+/// so the PATH lookup in `resolve_tool` finds it.
+fn default_tool(base: &str) -> PathBuf {
+    #[cfg(windows)]
+    {
+        Path::new(r"C:\P\ffmpeg\bin").join(exe_name(base))
+    }
+    #[cfg(not(windows))]
+    {
+        PathBuf::from(base)
+    }
 }
