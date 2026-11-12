@@ -12,7 +12,7 @@
 use crate::config::Config;
 use crate::event::Ev;
 use crate::probe::{self, MediaInfo};
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow};
 use crossbeam_channel::Sender;
 use std::collections::{HashMap, VecDeque};
 use std::io::{BufRead, BufReader};
@@ -65,8 +65,50 @@ pub struct JobResult {
     pub new_duration: f64,
     pub encode_secs: f64,
     pub total_secs: f64,
+    /// Short human summary: shown next to `[failed]` in the UI and in reports.
     pub note: String,
+    /// Full diagnostics (command line, ffmpeg stderr, position reached).
+    /// Only filled in for failures; written to the run log.
+    pub detail: String,
 }
+
+/// A job failure, carrying both the one-line reason for the UI and the full
+/// diagnostics for the log.
+#[derive(Debug)]
+pub struct JobError {
+    pub message: String,
+    pub detail: String,
+    /// Wall-clock seconds spent before failing (filled in by `run_job`).
+    pub elapsed_secs: f64,
+}
+
+impl JobError {
+    fn with_detail(message: impl Into<String>, detail: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            detail: detail.into(),
+            elapsed_secs: 0.0,
+        }
+    }
+}
+
+impl From<anyhow::Error> for JobError {
+    fn from(e: anyhow::Error) -> Self {
+        Self {
+            message: format!("{e:#}"),
+            detail: String::new(),
+            elapsed_secs: 0.0,
+        }
+    }
+}
+
+impl std::fmt::Display for JobError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for JobError {}
 
 impl JobResult {
     /// Bytes freed. Zero for any outcome where nothing was actually replaced
@@ -227,9 +269,10 @@ pub fn start(
                             new_bitrate_bps: 0,
                             old_duration: job.duration_secs,
                             new_duration: 0.0,
-                            encode_secs: 0.0,
-                            total_secs: 0.0,
-                            note: format!("{e:#}"),
+                            encode_secs: e.elapsed_secs,
+                            total_secs: e.elapsed_secs,
+                            note: e.message,
+                            detail: e.detail,
                         })));
                     }
                 }
@@ -251,7 +294,7 @@ fn run_job(
     opts: &EncodeOpts,
     control: &Arc<Control>,
     tx: &Sender<Ev>,
-) -> Result<JobResult> {
+) -> Result<JobResult, JobError> {
     let t0 = Instant::now();
     let (final_path, container) = output_target(&job.path);
     let tmp_dir = tmp_dir_for(&job.path);
@@ -274,7 +317,13 @@ fn run_job(
         size_bytes: job.size_bytes,
     });
 
-    let result = encode_and_verify(job, opts, control, tx, &out_path, &container, &final_path, t0);
+    let result = encode_and_verify(job, opts, control, tx, &out_path, &container, &final_path, t0)
+        .map_err(|mut e| {
+            if e.elapsed_secs <= 0.0 {
+                e.elapsed_secs = t0.elapsed().as_secs_f64();
+            }
+            e
+        });
 
     // Always clean the temp folder.
     let _ = std::fs::remove_dir_all(&tmp_dir);
@@ -292,7 +341,7 @@ fn encode_and_verify(
     container: &str,
     final_path: &Path,
     t0: Instant,
-) -> Result<JobResult> {
+) -> Result<JobResult, JobError> {
     let job_id = job_id(&job.path);
 
     let mut cmd = Command::new(&opts.ffmpeg);
@@ -329,6 +378,7 @@ fn encode_and_verify(
     let mut child = cmd
         .spawn()
         .with_context(|| format!("spawning {}", opts.ffmpeg.display()))?;
+    let command_line = command_line(&cmd);
     let pid = child.id();
     control.register(job_id, pid);
 
@@ -431,16 +481,48 @@ fn encode_and_verify(
             encode_secs,
             total_secs: t0.elapsed().as_secs_f64(),
             note: "cancelled by user".into(),
+            detail: String::new(),
         });
     }
 
     if !status.success() {
-        let tail = stderr_tail
+        let tail: Vec<String> = stderr_tail
             .lock()
-            .map(|t| t.iter().cloned().collect::<Vec<_>>().join(" ⏎ "))
+            .map(|t| t.iter().cloned().collect())
             .unwrap_or_default();
         let _ = std::fs::remove_file(out_path);
-        bail!("ffmpeg exited with {}: {}", status, truncate(&tail, 400));
+        let reached = if job.duration_secs > 0.0 {
+            format!(
+                "{:.0}% of {}",
+                (last_secs / job.duration_secs * 100.0).clamp(0.0, 100.0),
+                crate::fmt::duration(job.duration_secs)
+            )
+        } else {
+            "?".to_string()
+        };
+        let mut detail = format!(
+            "exit: {status}\nsource: {}\nreached: {reached} after {encode_secs:.1}s\ncommand: {command_line}\nstderr:"
+            ,
+            job.path.display()
+        );
+        if tail.is_empty() {
+            detail.push_str(" (none)\n");
+        } else {
+            detail.push('\n');
+            for line in &tail {
+                detail.push_str("  ");
+                detail.push_str(line);
+                detail.push('\n');
+            }
+        }
+        // Lead with the error itself: the row in the UI only has room for the
+        // start of it, and the timings/exit code are already in the log line.
+        let note = if tail.is_empty() {
+            format!("at {reached} · ffmpeg {status} with no error output (killed?)")
+        } else {
+            format!("at {reached} · {}", summarize_stderr(&tail))
+        };
+        return Err(JobError::with_detail(note, detail));
     }
 
     // ---- verification ----
@@ -501,6 +583,7 @@ fn encode_and_verify(
             encode_secs,
             total_secs: t0.elapsed().as_secs_f64(),
             note,
+            detail: String::new(),
         });
     }
 
@@ -519,6 +602,7 @@ fn encode_and_verify(
         encode_secs,
         total_secs: t0.elapsed().as_secs_f64(),
         note,
+        detail: String::new(),
     })
 }
 
@@ -536,6 +620,7 @@ fn rejected(job: &MediaInfo, final_path: &Path, encode_secs: f64, note: String) 
         encode_secs,
         total_secs: encode_secs,
         note,
+        detail: String::new(),
     }
 }
 
@@ -606,6 +691,48 @@ fn truncate(s: &str, max: usize) -> String {
     }
 }
 
+/// Rebuild the ffmpeg command line for the log (quoting args with spaces).
+fn command_line(cmd: &Command) -> String {
+    let mut out = String::new();
+    let mut push = |part: &str| {
+        if !out.is_empty() {
+            out.push(' ');
+        }
+        if part.contains(' ') {
+            out.push('"');
+            out.push_str(part);
+            out.push('"');
+        } else {
+            out.push_str(part);
+        }
+    };
+    push(&cmd.get_program().to_string_lossy());
+    for arg in cmd.get_args() {
+        push(&arg.to_string_lossy());
+    }
+    out
+}
+
+/// Pick the most useful line out of ffmpeg's stderr tail. ffmpeg usually ends
+/// with a generic "Conversion failed!", so prefer the specific error above it.
+fn summarize_stderr(tail: &[String]) -> String {
+    let specific = tail.iter().rev().find(|line| {
+        let l = line.to_ascii_lowercase();
+        (l.contains("error")
+            || l.contains("unable")
+            || l.contains("no space")
+            || l.contains("invalid")
+            || l.contains("denied")
+            || l.contains("cannot"))
+            && !l.contains("conversion failed")
+    });
+    let chosen = specific
+        .or_else(|| tail.iter().rev().find(|l| !l.trim().is_empty()))
+        .map(|s| s.trim())
+        .unwrap_or("no error output from ffmpeg");
+    truncate(chosen, 300)
+}
+
 fn kill_pid(pid: u32) {
     #[cfg(windows)]
     {
@@ -642,6 +769,7 @@ mod tests {
             encode_secs: 1.0,
             total_secs: 1.0,
             note: String::new(),
+            detail: String::new(),
         }
     }
 
@@ -711,5 +839,38 @@ mod tests {
         assert_eq!(std::fs::read(&backup).unwrap(), b"NEW");
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod stderr_tests {
+    use super::*;
+
+    #[test]
+    fn picks_the_specific_error_not_the_generic_tail() {
+        let tail = vec![
+            "[libx264 @ 0000] using cpu capabilities".to_string(),
+            "Error while decoding stream #0:0: Invalid data found when processing input".to_string(),
+            "Conversion failed!".to_string(),
+        ];
+        let s = summarize_stderr(&tail);
+        assert!(s.contains("Invalid data found"), "got: {s}");
+        assert!(!s.contains("Conversion failed"), "got: {s}");
+    }
+
+    #[test]
+    fn falls_back_to_last_line_then_to_a_placeholder() {
+        let tail = vec!["some warning".to_string(), "moov atom not found".to_string()];
+        assert_eq!(summarize_stderr(&tail), "moov atom not found");
+        assert!(summarize_stderr(&[]).contains("no error output"));
+    }
+
+    #[test]
+    fn command_line_quotes_paths_with_spaces() {
+        let mut cmd = Command::new("ffmpeg");
+        cmd.arg("-i").arg(r"E:\Po\my clip.mp4").arg("-y");
+        let line = command_line(&cmd);
+        assert!(line.starts_with("ffmpeg -i "), "got: {line}");
+        assert!(line.contains(r#""E:\Po\my clip.mp4""#), "got: {line}");
     }
 }

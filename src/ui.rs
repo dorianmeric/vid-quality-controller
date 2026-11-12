@@ -341,6 +341,18 @@ fn draw_encode_body(f: &mut Frame, area: Rect, app: &App) {
         } else {
             format!("kept {}", fmt::bytes(r.old_size))
         };
+        // Failures and rejections carry the reason; show it at the end of the row.
+        let reason = if r.outcome.is_success() || r.note.is_empty() {
+            String::new()
+        } else {
+            let used = 9 + 38 + 2 + saved.chars().count();
+            let room = (inner.width as usize).saturating_sub(used + 4);
+            if room < 8 {
+                String::new()
+            } else {
+                format!("  ·  {}", truncate(&r.note, room))
+            }
+        };
         lines.push(Line::from(vec![
             Span::styled(format!("[{tag}] "), Style::new().fg(color)),
             Span::styled(
@@ -349,6 +361,7 @@ fn draw_encode_body(f: &mut Frame, area: Rect, app: &App) {
             ),
             Span::raw("  "),
             Span::styled(saved, Style::new().fg(DIM)),
+            Span::styled(reason, Style::new().fg(color)),
         ]));
     }
     if lines.is_empty() {
@@ -368,7 +381,7 @@ fn draw_summary_body(f: &mut Frame, area: Rect, app: &mut App) {
     f.render_widget(block, area);
 
     let widths = [
-        Constraint::Length(40),
+        Constraint::Length(36),
         Constraint::Length(10),
         Constraint::Length(10),
         Constraint::Length(10),
@@ -376,7 +389,7 @@ fn draw_summary_body(f: &mut Frame, area: Rect, app: &mut App) {
         Constraint::Length(9),
         Constraint::Length(10),
         Constraint::Length(9),
-        Constraint::Min(6),
+        Constraint::Min(10),
     ];
     let header = Row::new(vec![
         "file", "before", "after", "saved", "saved%", "bitrate", "length Δ", "time", "status",
@@ -420,7 +433,7 @@ fn draw_summary_body(f: &mut Frame, area: Rect, app: &mut App) {
                 "—".into()
             };
             Row::new(vec![
-                Cell::from(truncate(&r.path.display().to_string(), 39)),
+                Cell::from(truncate(&r.path.display().to_string(), 35)),
                 Cell::from(fmt::bytes_short(r.old_size)),
                 Cell::from(new),
                 Cell::from(Span::styled(saved, Style::new().fg(color))),
@@ -432,7 +445,19 @@ fn draw_summary_body(f: &mut Frame, area: Rect, app: &mut App) {
                 )),
                 Cell::from(delta),
                 Cell::from(format!("{:.0}s", r.total_secs)),
-                Cell::from(Span::styled(label, Style::new().fg(color))),
+                // The status column is the flexible one, so the reason for a
+                // failure/rejection fits at the end of the row.
+                Cell::from(Line::from(vec![
+                    Span::styled(label, Style::new().fg(color)),
+                    Span::styled(
+                        if r.note.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" · {}", r.note)
+                        },
+                        Style::new().fg(if r.outcome.is_success() { DIM } else { color }),
+                    ),
+                ])),
             ])
             .style(Style::new().fg(Color::Rgb(200, 200, 210)))
         })
@@ -770,6 +795,23 @@ fn draw_summary_panel(f: &mut Frame, area: Rect, app: &App) {
             Span::styled(
                 "   (enter = rescan · q = quit)",
                 Style::new().fg(Color::Rgb(70, 70, 80)),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("log    ", Style::new().fg(DIM)),
+            Span::styled(
+                app.log_path()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| "— (not writable)".into()),
+                Style::new().fg(ACCENT),
+            ),
+            Span::styled(
+                if failed > 0 {
+                    "   ← full error details for failed files"
+                } else {
+                    ""
+                },
+                Style::new().fg(BAD),
             ),
         ]),
     ];

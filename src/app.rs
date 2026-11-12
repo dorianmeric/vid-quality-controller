@@ -3,6 +3,7 @@
 use crate::config::Config;
 use crate::encode::{self, Control, EncodeOpts, JobResult, Outcome};
 use crate::event::Ev;
+use crate::log::RunLog;
 use crate::probe::MediaInfo;
 use crate::report;
 use crossbeam_channel::Sender;
@@ -171,6 +172,8 @@ pub struct App {
     pub coordinator: Option<JoinHandle<()>>,
     pub confirm: bool,
     pub report_path: Option<PathBuf>,
+    /// Full run log (`log-YYYY-MM-DD-HHMM.txt` next to the exe).
+    pub log: RunLog,
 
     // settings
     pub settings: bool,
@@ -204,6 +207,7 @@ impl App {
             coordinator: None,
             confirm: false,
             report_path: None,
+            log: RunLog::disabled(),
             settings: false,
             settings_idx: 0,
             edit: None,
@@ -212,6 +216,21 @@ impl App {
 
     pub fn toast(&mut self, msg: impl Into<String>) {
         self.toast = Some((msg.into(), Instant::now()));
+    }
+
+    /// Attach the run log created by `main`. Safe to skip (tests do).
+    pub fn attach_log(&mut self, log: RunLog) {
+        if let Some(err) = log.error() {
+            let err = err.to_string();
+            self.toast(err);
+        }
+        self.log = log;
+        let started = self.log.started().clock();
+        self.log.line(&format!("window opened at {started}"));
+    }
+
+    pub fn log_path(&self) -> Option<&std::path::Path> {
+        self.log.path()
     }
 
     pub fn toast_text(&self) -> Option<&str> {
@@ -237,14 +256,18 @@ impl App {
             self.scanning = false;
             self.phase = Phase::Review;
             self.toast(format!("root folder not found: {}", self.cfg.root.display()));
+            self.log
+                .line(&format!("scan ABORTED: not a folder: {}", self.cfg.root.display()));
             return;
         }
         if !self.cfg.tools_ok() {
             self.scanning = false;
             self.phase = Phase::Review;
             self.toast("ffmpeg/ffprobe not found — check settings (t)");
+            self.log.line("scan ABORTED: ffmpeg/ffprobe not found");
             return;
         }
+        self.log.line(&format!("scan started: {}", self.cfg.root.display()));
         crate::scan::start(self.cfg.clone(), self.tx.clone());
     }
 
@@ -291,6 +314,13 @@ impl App {
                     "scanned {scanned} files in {:.1}s · {cands} candidates · {errors} unreadable",
                     elapsed_secs
                 ));
+                self.log.line(&format!(
+                    "scan done: {scanned} files probed, {cands} candidates, {} total, {errors} unreadable ({elapsed_secs:.1}s)",
+                    crate::fmt::bytes(self.candidate_bytes())
+                ));
+                for err in &self.scan_errors {
+                    self.log.line(&format!("scan error: {err}"));
+                }
             }
             Ev::JobStarted {
                 id,
@@ -319,6 +349,7 @@ impl App {
                 if let Some(row) = self.rows.iter_mut().find(|r| r.info.path == path) {
                     row.status = RowStatus::Running;
                 }
+                self.log.line(&format!("start: {}", path.display()));
             }
             Ev::JobProgress {
                 id,
@@ -354,6 +385,10 @@ impl App {
                 if let Some(row) = self.rows.iter_mut().find(|r| r.info.path == path) {
                     row.status = RowStatus::Done(outcome);
                 }
+                if let Some(res) = self.enc.as_ref().and_then(|e| e.results.last()) {
+                    let copy = res.clone();
+                    self.log.job_result(&copy);
+                }
             }
             Ev::EncodeDone { elapsed_secs } => {
                 if let Some(enc) = &mut self.enc {
@@ -364,9 +399,45 @@ impl App {
                     let path = report::write(&results, &self.cfg);
                     self.report_path = Some(path);
                 }
+                self.log_encode_summary(elapsed_secs);
                 self.phase = Phase::Summary;
             }
         }
+    }
+
+    fn log_encode_summary(&mut self, elapsed_secs: f64) {
+        let Some(enc) = &self.enc else { return };
+        let count = |o: Outcome| enc.results.iter().filter(|r| r.outcome == o).count();
+        let ok: u64 = enc
+            .results
+            .iter()
+            .filter(|r| r.outcome.is_success())
+            .map(|r| r.new_size)
+            .sum();
+        let before: u64 = enc
+            .results
+            .iter()
+            .filter(|r| r.outcome.is_success())
+            .map(|r| r.old_size)
+            .sum();
+        let line = format!(
+            "encode done: {} replaced, {} dry-run, {} rejected, {} failed, {} cancelled · {} -> {} (freed {}) · {:.1}s",
+            count(Outcome::Replaced),
+            count(Outcome::DryRun),
+            count(Outcome::Rejected),
+            count(Outcome::Failed),
+            count(Outcome::Cancelled),
+            crate::fmt::bytes(before),
+            crate::fmt::bytes(ok),
+            crate::fmt::bytes(before.saturating_sub(ok)),
+            elapsed_secs
+        );
+        self.log.line(&line);
+        if let Some(p) = &self.report_path {
+            self.log
+                .line(&format!("report written: {}", p.display()));
+        }
+        self.log.raw("\n");
     }
 
     // ------------------------------------------------------------------- input
@@ -720,6 +791,10 @@ impl App {
             }
         }
         let opts = EncodeOpts::from_config(&self.cfg);
+        self.log.line(&format!(
+            "encode start: {total} files, {} workers, dry_run={}, keep_backup={}",
+            self.cfg.parallelism, self.cfg.dry_run, self.cfg.keep_backup
+        ));
         let (control, handle) = encode::start(jobs, opts, self.tx.clone());
         self.control = Some(control);
         self.coordinator = Some(handle);

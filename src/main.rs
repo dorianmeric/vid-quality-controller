@@ -4,6 +4,7 @@ mod encode;
 mod event;
 mod fmt;
 mod headless;
+mod log;
 mod probe;
 mod report;
 mod scan;
@@ -115,6 +116,10 @@ fn run(cfg: Config, cfg_path: PathBuf, note: Option<String>) -> Result<()> {
     let (tx, rx) = unbounded();
     let mut app = App::new(cfg, cfg_path, note, tx);
 
+    // Full run log lives next to the exe, named after the start time.
+    let log = log::RunLog::create(&app.cfg);
+    app.attach_log(log);
+
     let mut terminal = ratatui::init();
     app.start_scan();
 
@@ -144,6 +149,9 @@ fn run(cfg: Config, cfg_path: PathBuf, note: Option<String>) -> Result<()> {
     };
 
     app.shutdown();
+    if let Some(path) = app.log_path() {
+        app.log.line(&format!("window closed — log: {}", path.display()));
+    }
     ratatui::restore();
     result
 }

@@ -25,6 +25,11 @@ cargo build --release
    and the backup is deleted (or kept with `keep_backup`). Temp folders are always
    removed, even on failure.
 6. **Report** — a before/after table plus `reports/vqc-<stamp>.csv` and `.txt`.
+7. **Log** — a full run log next to the executable, `log-YYYY-MM-DD-HHMMSS.txt`
+   (named after the start time). It records the config, every scan, every job
+   with sizes/bitrates/durations/timings, and for failures the exit code, how
+   far the encode got, the exact ffmpeg command line and the ffmpeg stderr.
+   The path is shown on the summary screen.
 
 ## Encode preset (defaults, all configurable in-app with `t`)
 
@@ -74,6 +79,21 @@ directory and rewritten when you change settings in-app. Everything the TUI
 exposes lives there, including `duration_tolerance_secs`, `keep_backup`,
 `skip_av1` (re-encoding AV1 only loses quality), `probe_parallelism` and
 `ffmpeg_extra_args`.
+
+## Failures
+
+A job that fails is reported in three places:
+
+- the row in the terminal ends with the reason, e.g.
+  `[failed] clip.mp4  kept 900M  ·  at 71% of 10:00 · Error while decoding stream #0:0: …`
+- the summary table's status column repeats it,
+- the run log gets the full detail block (exit code, position reached, command
+  line, complete ffmpeg stderr).
+
+A file that decodes only partially usually does **not** make ffmpeg exit non-zero;
+it produces a short output, which the duration check then rejects
+(`rejected · duration mismatch: 20.87s vs 60.00s`). Both cases leave the original
+untouched and clean up the temp folder.
 
 ## Notes and caveats
 

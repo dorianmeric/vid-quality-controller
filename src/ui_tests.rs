@@ -173,6 +173,7 @@ fn encoding_screen_renders() {
             encode_secs: 100.0,
             total_secs: 101.0,
             note: "duration delta +0.00s".into(),
+            detail: String::new(),
         }],
         paused: false,
         cancelling: false,
@@ -183,6 +184,61 @@ fn encoding_screen_renders() {
     assert!(text.contains("1/2 files"), "overall gauge missing:\n{text}");
     assert!(text.contains("b.mp4"), "slot missing:\n{text}");
     assert!(text.contains("replaced"), "recent result missing:\n{text}");
+}
+
+#[test]
+fn failed_job_shows_its_error_in_the_row() {
+    let mut app = test_app();
+    app.phase = Phase::Encoding;
+    app.enc = Some(EncodeState {
+        total: 2,
+        completed: 2,
+        started: Instant::now(),
+        slots: vec![Slot {
+            id: None,
+            name: String::new(),
+            frac: 0.0,
+            speed: 0.0,
+            out_bytes: 0,
+            dur: 0.0,
+            src_bytes: 0,
+            started: None,
+        }],
+        results: vec![JobResult {
+            path: PathBuf::from("E:\\Po\\folder\\broken.mp4"),
+            final_path: PathBuf::from("E:\\Po\\folder\\broken.mp4"),
+            outcome: Outcome::Failed,
+            old_size: 500 * 1024 * 1024,
+            new_size: 0,
+            old_bitrate_bps: 5_000_000,
+            new_bitrate_bps: 0,
+            old_duration: 600.0,
+            new_duration: 0.0,
+            encode_secs: 44.9,
+            total_secs: 45.2,
+            note: "at 71% of 10:00 · Error while decoding stream #0:0: Invalid data found".into(),
+            detail: "command: ffmpeg -i ...".into(),
+        }],
+        paused: false,
+        cancelling: false,
+        elapsed: 45.2,
+        finished: true,
+    });
+    let text = render(&mut app);
+    assert!(text.contains("[failed"), "tag missing:\n{text}");
+    assert!(
+        text.contains("Error while decoding"),
+        "failure reason must be visible in the row:\n{text}"
+    );
+
+    // Same reason must survive on the summary screen, at the end of the row.
+    app.phase = Phase::Summary;
+    let text = render(&mut app);
+    assert!(text.contains("broken.mp4"), "row missing:\n{text}");
+    assert!(
+        text.contains("Error while decoding"),
+        "summary must show the failure reason:\n{text}"
+    );
 }
 
 #[test]
@@ -216,6 +272,7 @@ fn summary_screen_renders() {
             encode_secs: 100.0,
             total_secs: 101.0,
             note: String::new(),
+            detail: String::new(),
         }],
         paused: false,
         cancelling: false,
@@ -368,3 +425,4 @@ fn encode_order_follows_the_table_order() {
     app.refresh_visible();
     assert_eq!(app.selected_jobs().len(), 3, "filter must not change the queue");
 }
+

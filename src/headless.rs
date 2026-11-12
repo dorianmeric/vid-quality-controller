@@ -6,6 +6,7 @@ use crate::config::Config;
 use crate::encode::{self, EncodeOpts};
 use crate::event::Ev;
 use crate::fmt;
+use crate::log::RunLog;
 use crate::probe::MediaInfo;
 use crate::report;
 use anyhow::{Result, bail};
@@ -23,6 +24,10 @@ pub fn run(cfg: Config, scan_only: bool) -> Result<()> {
     }
 
     println!("scanning {} …", cfg.root.display());
+    let mut log = RunLog::create(&cfg);
+    if let Some(path) = log.path() {
+        println!("log: {}", path.display());
+    }
     let (tx, rx) = unbounded();
     crate::scan::start(cfg.clone(), tx.clone());
 
@@ -55,6 +60,13 @@ pub fn run(cfg: Config, scan_only: bool) -> Result<()> {
     // Same order as the TUI's default view: biggest files first.
     let mut candidates = candidates;
     candidates.sort_by_key(|c| std::cmp::Reverse(c.size_bytes));
+    log.line(&format!(
+        "scan done: {} files probed, {} candidates, {}, {} unreadable",
+        found.len(),
+        candidates.len(),
+        fmt::bytes(total_bytes),
+        scan_errors
+    ));
     println!(
         "{} files scanned · {} unreadable · {} candidates over {} kbps · {}",
         found.len(),
@@ -99,6 +111,7 @@ pub fn run(cfg: Config, scan_only: bool) -> Result<()> {
 
     let opts = EncodeOpts::from_config(&cfg);
     let total = candidates.len();
+    log.line(&format!("encode start: {total} files (headless)"));
     let (control, handle) = encode::start(candidates, opts, tx.clone());
     let started = Instant::now();
     let mut results = Vec::new();
@@ -129,6 +142,7 @@ pub fn run(cfg: Config, scan_only: bool) -> Result<()> {
                     r.total_secs,
                     r.note
                 );
+                log.job_result(&r);
                 results.push(r);
                 let _ = std::io::stdout().flush();
             }
