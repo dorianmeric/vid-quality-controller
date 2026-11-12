@@ -685,13 +685,18 @@ impl App {
         }
     }
 
-    fn start_encoding(&mut self) {
-        let jobs: Vec<MediaInfo> = self
-            .rows
+    /// The files that will be encoded, in the order they are shown in the
+    /// table (so the current sort decides the processing order).
+    pub fn selected_jobs(&self) -> Vec<MediaInfo> {
+        self.visible
             .iter()
-            .filter(|r| r.candidate && r.selected)
-            .map(|r| r.info.clone())
-            .collect();
+            .filter(|&&i| self.rows[i].candidate && self.rows[i].selected)
+            .map(|&i| self.rows[i].info.clone())
+            .collect()
+    }
+
+    fn start_encoding(&mut self) {
+        let jobs = self.selected_jobs();
         if jobs.is_empty() {
             self.toast("nothing selected");
             return;

@@ -52,6 +52,9 @@ pub fn run(cfg: Config, scan_only: bool) -> Result<()> {
         .cloned()
         .collect();
     let total_bytes: u64 = candidates.iter().map(|c| c.size_bytes).sum();
+    // Same order as the TUI's default view: biggest files first.
+    let mut candidates = candidates;
+    candidates.sort_by_key(|c| std::cmp::Reverse(c.size_bytes));
     println!(
         "{} files scanned · {} unreadable · {} candidates over {} kbps · {}",
         found.len(),
@@ -68,9 +71,8 @@ pub fn run(cfg: Config, scan_only: bool) -> Result<()> {
             "\n{:<10} {:<10} {:<11} {:<8} file",
             "size", "bitrate", "res", "length"
         );
-        let mut sorted = candidates.clone();
-        sorted.sort_by_key(|c| std::cmp::Reverse(c.size_bytes));
-        for c in &sorted {
+        let sorted = &candidates;
+        for c in sorted {
             println!(
                 "{:<10} {:<10} {:<11} {:<8} {}",
                 fmt::bytes_short(c.size_bytes),

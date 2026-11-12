@@ -308,3 +308,63 @@ fn slot_eta_uses_time_spent_on_that_file() {
     let eta = slot.eta_secs().unwrap();
     assert!(eta < 5.0, "99% done should be almost finished, got {eta}");
 }
+
+#[test]
+fn encode_order_follows_the_table_order() {
+    let (tx, _rx) = unbounded();
+    let mut app = App::new(Config::default(), PathBuf::from("c.json"), None, tx);
+    // Names sort opposite to sizes, so the two sort modes give different orders.
+    app.rows = vec![
+        RowItem {
+            info: media("z_big.mp4", 900.0, 6.0, "h264", 600.0),
+            candidate: true,
+            selected: true,
+            status: RowStatus::Pending,
+        },
+        RowItem {
+            info: media("m_mid.mp4", 400.0, 5.0, "h264", 600.0),
+            candidate: true,
+            selected: true,
+            status: RowStatus::Pending,
+        },
+        RowItem {
+            info: media("a_small.mp4", 40.0, 4.0, "h264", 600.0),
+            candidate: true,
+            selected: true,
+            status: RowStatus::Pending,
+        },
+        RowItem {
+            info: media("skip_me.mp4", 500.0, 9.0, "h264", 600.0),
+            candidate: true,
+            selected: false,
+            status: RowStatus::Pending,
+        },
+    ];
+
+    // Default sort (size, biggest first) is what the table shows.
+    app.sort = SortMode::Size;
+    app.refresh_visible();
+    let order: Vec<String> = app
+        .selected_jobs()
+        .iter()
+        .map(|m| m.name())
+        .collect();
+    assert_eq!(order, ["z_big.mp4", "m_mid.mp4", "a_small.mp4"]);
+
+    // Re-sorting by name must re-order the queue the same way.
+    app.sort = SortMode::Name;
+    app.refresh_visible();
+    let order: Vec<String> = app
+        .selected_jobs()
+        .iter()
+        .map(|m| m.name())
+        .collect();
+    assert_eq!(order, ["a_small.mp4", "m_mid.mp4", "z_big.mp4"]);
+
+    // The deselected file never enters the queue, and only candidates do.
+    assert!(!order.iter().any(|n| n == "skip_me.mp4"));
+
+    app.show_all = true;
+    app.refresh_visible();
+    assert_eq!(app.selected_jobs().len(), 3, "filter must not change the queue");
+}
