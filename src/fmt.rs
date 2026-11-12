@@ -43,6 +43,39 @@ pub fn duration(secs: f64) -> String {
     }
 }
 
+/// Spelled-out duration with only the non-zero units, e.g.
+/// `11 days 23 hours 12 minutes 10 seconds`, `4 minutes 5 seconds`, `12 seconds`.
+pub fn duration_long(secs: f64) -> String {
+    if !secs.is_finite() || secs < 0.0 {
+        return "—".into();
+    }
+    let total = secs.round() as u64;
+    let (d, h, m, s) = (
+        total / 86_400,
+        (total % 86_400) / 3600,
+        (total % 3600) / 60,
+        total % 60,
+    );
+    let mut parts: Vec<String> = Vec::new();
+    for (value, name) in [(d, "day"), (h, "hour"), (m, "minute"), (s, "second")] {
+        if value > 0 {
+            parts.push(format!("{value} {}", plural(value, name)));
+        }
+    }
+    if parts.is_empty() {
+        return "0 seconds".into();
+    }
+    parts.join(" ")
+}
+
+fn plural(n: u64, name: &str) -> String {
+    if n == 1 {
+        name.to_string()
+    } else {
+        format!("{name}s")
+    }
+}
+
 /// Compact bitrate: `3.42 Mbps` / `812 kbps`.
 pub fn bitrate(bps: u64) -> String {
     let k = bps as f64 / 1000.0;
@@ -78,5 +111,29 @@ pub fn fps(v: f64) -> String {
         format!("{:.0}", v)
     } else {
         format!("{v:.2}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn long_durations_skip_zero_units() {
+        assert_eq!(duration_long(0.0), "0 seconds");
+        assert_eq!(duration_long(1.0), "1 second");
+        assert_eq!(duration_long(59.0), "59 seconds");
+        assert_eq!(duration_long(60.0), "1 minute");
+        assert_eq!(duration_long(61.0), "1 minute 1 second");
+        assert_eq!(duration_long(245.0), "4 minutes 5 seconds");
+        assert_eq!(duration_long(3600.0), "1 hour");
+        assert_eq!(duration_long(3660.0), "1 hour 1 minute");
+        assert_eq!(duration_long(86_400.0), "1 day");
+        assert_eq!(
+            duration_long(1_033_930.0),
+            "11 days 23 hours 12 minutes 10 seconds"
+        );
+        assert_eq!(duration_long(-5.0), "—");
+        assert_eq!(duration_long(f64::NAN), "—");
     }
 }

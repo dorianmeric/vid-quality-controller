@@ -642,14 +642,36 @@ fn draw_encode_panel(f: &mut Frame, area: Rect, app: &App) {
                 } else {
                     String::new()
                 };
-                let label = format!(
-                    "filename: {} · percent done: {:.0}% · speed: {:.2}x · time elapsed: {} · space saved: {}",
+                let position = fmt::duration(slot.frac * slot.dur);
+                let length = fmt::duration(slot.dur);
+                let eta = match slot.eta_secs() {
+                    Some(eta) => fmt::duration_long(eta),
+                    None => "estimating…".to_string(),
+                };
+                let full = format!(
+                    "filename: {} · percent done: {:.0}% · speed: {:.2}x · position: {position} / {length} · eta: {eta} · space saved: {saved}",
                     truncate(&slot.name, 34),
                     pct,
                     slot.speed,
-                    fmt::duration(slot.frac * slot.dur),
-                    saved
                 );
+                // The verbose label is long; fall back to a compact form so the
+                // ETA stays visible on narrower terminals.
+                let available = area_row.width.saturating_sub(2) as usize;
+                let label = if full.chars().count() <= available {
+                    full
+                } else {
+                    let compact = format!(
+                        "{} · {:.0}% · {:.2}x · {position}/{length} · eta: {eta} · {saved}",
+                        truncate(&slot.name, 28),
+                        pct,
+                        slot.speed,
+                    );
+                    if compact.chars().count() <= available {
+                        compact
+                    } else {
+                        truncate(&compact, available)
+                    }
+                };
                 f.render_widget(
                     Gauge::default()
                         .gauge_style(Style::new().fg(ACCENT).bg(Color::Rgb(30, 34, 46)))

@@ -147,6 +147,7 @@ fn encoding_screen_renders() {
                 out_bytes: 10 * 1024 * 1024,
                 dur: 130.0,
                 src_bytes: 40 * 1024 * 1024,
+                started: Some(Instant::now()),
             },
             Slot {
                 id: None,
@@ -156,6 +157,7 @@ fn encoding_screen_renders() {
                 out_bytes: 0,
                 dur: 0.0,
                 src_bytes: 0,
+                started: None,
             },
         ],
         results: vec![JobResult {
@@ -199,6 +201,7 @@ fn summary_screen_renders() {
             out_bytes: 0,
             dur: 0.0,
             src_bytes: 0,
+            started: None,
         }],
         results: vec![JobResult {
             path: PathBuf::from("E:\\Po\\folder\\a.mp4"),
@@ -269,4 +272,39 @@ fn candidate_rules() {
     assert!(!is_candidate(&cfg, &media("x.mp4", 5.0, 5.0, "h264", 60.0)));
     // No duration -> not trustworthy.
     assert!(!is_candidate(&cfg, &media("x.mp4", 100.0, 5.0, "h264", 0.0)));
+}
+
+#[test]
+fn slot_eta_uses_time_spent_on_that_file() {
+    use std::time::Duration;
+    let mut slot = Slot {
+        id: Some(1),
+        name: "a.mp4".into(),
+        frac: 0.5,
+        speed: 4.0,
+        out_bytes: 0,
+        dur: 60.0,
+        src_bytes: 0,
+        started: Some(Instant::now() - Duration::from_secs(30)),
+    };
+    let eta = slot.eta_secs().expect("half way there means an ETA");
+    assert!(
+        (25.0..=35.0).contains(&eta),
+        "half done after 30s should leave ~30s, got {eta}"
+    );
+
+    // Too early to trust: no estimate under 2%.
+    slot.frac = 0.01;
+    assert!(slot.eta_secs().is_none());
+
+    // No start time -> no estimate.
+    slot.frac = 0.5;
+    slot.started = None;
+    assert!(slot.eta_secs().is_none());
+
+    // Nearly done -> short remainder.
+    slot.started = Some(Instant::now() - Duration::from_secs(100));
+    slot.frac = 0.99;
+    let eta = slot.eta_secs().unwrap();
+    assert!(eta < 5.0, "99% done should be almost finished, got {eta}");
 }

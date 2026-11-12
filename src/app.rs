@@ -70,6 +70,8 @@ pub struct Slot {
     pub out_bytes: u64,
     pub dur: f64,
     pub src_bytes: u64,
+    /// When this job actually started encoding, for the per-file ETA.
+    pub started: Option<Instant>,
 }
 
 impl Slot {
@@ -82,7 +84,24 @@ impl Slot {
             out_bytes: 0,
             dur: 0.0,
             src_bytes: 0,
+            started: None,
         }
+    }
+
+    /// Estimated seconds left for *this file*: assume the work done so far
+    /// is representative, i.e. `elapsed / frac * (1 - frac)`.
+    /// `None` until enough progress has been made to trust the estimate.
+    pub fn eta_secs(&self) -> Option<f64> {
+        let started = self.started?;
+        if self.frac <= 0.02 {
+            return None;
+        }
+        let elapsed = started.elapsed().as_secs_f64();
+        if elapsed <= 0.0 {
+            return None;
+        }
+        let remaining = (1.0 - self.frac) / self.frac * elapsed;
+        Some(remaining.max(0.0))
     }
 }
 
@@ -293,6 +312,7 @@ impl App {
                             out_bytes: 0,
                             dur: duration_secs,
                             src_bytes: size_bytes,
+                            started: Some(Instant::now()),
                         };
                     }
                 }
