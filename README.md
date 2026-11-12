@@ -57,7 +57,7 @@ found on `PATH`).
 --threshold <KBPS>   bitrate threshold (default 2000)
 --min-size <MB>      ignore smaller files (default 20)
 --preset <0-13>      SVT-AV1 preset (default 6)
---jobs <N>           concurrent encodes (default 4)
+--jobs <N>           concurrent encodes (default 1)
 --dry-run            encode + verify, never touch originals
 --scan-only          no TUI: list candidates and exit
 --headless           no TUI: encode every candidate, print report

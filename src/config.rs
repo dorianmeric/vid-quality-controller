@@ -57,7 +57,7 @@ impl Default for Config {
             audio_channels: 2,
             faststart: true,
             skip_av1: true,
-            parallelism: 4,
+            parallelism: 1,
             probe_parallelism: 6,
             duration_tolerance_secs: 1.0,
             keep_backup: false,
