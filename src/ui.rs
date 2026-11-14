@@ -243,12 +243,19 @@ fn draw_encode_body(f: &mut Frame, area: Rect, app: &App) {
         } else {
             format!("kept {}", fmt::bytes(r.old_size))
         };
+        // Bitrate before → after. Nothing was written for a rejection/failure, so
+        // those only have the source bitrate to show.
+        let bitrate = if r.new_bitrate_bps > 0 {
+            format!("{} → {}", fmt::bitrate(r.old_bitrate_bps), fmt::bitrate(r.new_bitrate_bps))
+        } else {
+            fmt::bitrate(r.old_bitrate_bps)
+        };
         // Failures and rejections carry the reason; show it at the end of the row.
         let path = display_path(&r.path);
         let reason = if r.outcome.is_success() || r.note.is_empty() {
             String::new()
         } else {
-            let used = 9 + path.chars().count() + 2 + saved.chars().count();
+            let used = 9 + path.chars().count() + 2 + saved.chars().count() + 2 + bitrate.chars().count();
             let room = (inner.width as usize).saturating_sub(used + 4);
             if room < 8 { String::new() } else { format!("  ·  {}", truncate(&r.note, room)) }
         };
@@ -257,6 +264,8 @@ fn draw_encode_body(f: &mut Frame, area: Rect, app: &App) {
             Span::styled(path, Style::new().fg(Color::Rgb(200, 200, 210))),
             Span::raw("  "),
             Span::styled(saved, Style::new().fg(DIM)),
+            Span::raw("  "),
+            Span::styled(bitrate, Style::new().fg(Color::Rgb(150, 150, 165))),
             Span::styled(reason, Style::new().fg(color)),
         ]));
     }

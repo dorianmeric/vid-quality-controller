@@ -252,6 +252,36 @@ fn in_progress_lists_the_newest_result_at_the_bottom() {
 }
 
 #[test]
+fn in_progress_shows_the_output_bitrate() {
+    let mut failed = job("E:/Po/broken.mp4", Outcome::Failed);
+    failed.new_size = 0;
+    failed.new_bitrate_bps = 0;
+    failed.note = "pass 2/2 at 40% · Error while decoding".into();
+
+    let mut app = test_app();
+    app.phase = Phase::Encoding;
+    app.enc = Some(EncodeState {
+        total: 2,
+        completed: 2,
+        started: Instant::now(),
+        slots: vec![Slot { id: None, name: String::new(), frac: 0.0, speed: 0.0, out_bytes: 0, dur: 0.0, src_bytes: 0, started: None, command: String::new() }],
+        results: vec![job("E:/Po/ok.mp4", Outcome::Replaced), failed],
+        paused: false,
+        cancelling: false,
+        elapsed: 10.0,
+        finished: true,
+    });
+    let text = render(&mut app);
+    assert!(text.contains("6.50 Mbps → 2.10 Mbps"), "output bitrate missing:\n{text}");
+
+    // Nothing is written for a failed encode, so it must not show a 0 kbps "after".
+    let row: Vec<&str> = text.lines().filter(|l| l.contains("broken.mp4")).collect();
+    assert_eq!(row.len(), 1, "failed row missing:\n{text}");
+    assert!(row[0].contains("6.50 Mbps"), "source bitrate missing:\n{text}");
+    assert!(!row[0].contains('→'), "failed row must not claim an output bitrate:\n{text}");
+}
+
+#[test]
 fn in_progress_shows_full_paths_and_only_shortens_long_ones() {
     // A folder of 101 characters must be shortened to 100, a shorter one kept.
     let long_folder = format!("E:/Po/{}/", "x".repeat(94));
