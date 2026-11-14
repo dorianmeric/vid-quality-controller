@@ -106,6 +106,19 @@ fn filtering_hides_non_candidates() {
 }
 
 #[test]
+fn av1_files_show_their_over_factor_like_every_other_row() {
+    let mut app = test_app();
+    app.phase = Phase::Review;
+    app.show_all = true;
+    app.refresh_visible();
+    let text = render(&mut app);
+    assert!(!text.contains("av1 (skip)"), "the quality column must be the factor, not a label:\n{text}");
+    // d.mkv is AV1 at 3.0 Mbps against the 2000 kbps threshold: 1.5x over.
+    let row = text.lines().find(|l| l.contains("d.mkv")).expect("av1 row missing");
+    assert!(row.contains("1.5x over"), "av1 row must show its factor:\n{text}");
+}
+
+#[test]
 fn sorting_and_selection_are_stable() {
     let mut app = test_app();
     app.sort = SortMode::Bitrate;

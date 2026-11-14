@@ -183,11 +183,10 @@ fn draw_review_body(f: &mut Frame, area: Rect, app: &mut App) {
                 Span::styled("·", Style::new().fg(DIM))
             };
 
-            // How far over the threshold this file is.
+            // How far over the threshold this file is. Shown for every file,
+            // AV1 included: the codec column already says what it is.
             let over = info.bitrate_bps as f64 / app.cfg.threshold_bps().max(1) as f64;
-            let quality = if info.is_av1() {
-                Span::styled("av1 (skip)", Style::new().fg(DIM))
-            } else if over > 4.0 {
+            let quality = if over > 4.0 {
                 Span::styled(format!("{over:.1}x over"), Style::new().fg(BAD))
             } else if over > 2.0 {
                 Span::styled(format!("{over:.1}x over"), Style::new().fg(WARN))
