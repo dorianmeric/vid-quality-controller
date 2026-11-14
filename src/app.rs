@@ -77,16 +77,7 @@ pub struct Slot {
 
 impl Slot {
     fn empty() -> Self {
-        Self {
-            id: None,
-            name: String::new(),
-            frac: 0.0,
-            speed: 0.0,
-            out_bytes: 0,
-            dur: 0.0,
-            src_bytes: 0,
-            started: None,
-        }
+        Self { id: None, name: String::new(), frac: 0.0, speed: 0.0, out_bytes: 0, dur: 0.0, src_bytes: 0, started: None }
     }
 
     /// Estimated seconds left for *this file*: assume the work done so far
@@ -256,8 +247,7 @@ impl App {
             self.scanning = false;
             self.phase = Phase::Review;
             self.toast(format!("root folder not found: {}", self.cfg.root.display()));
-            self.log
-                .line(&format!("scan ABORTED: not a folder: {}", self.cfg.root.display()));
+            self.log.line(&format!("scan ABORTED: not a folder: {}", self.cfg.root.display()));
             return;
         }
         if !self.cfg.tools_ok() {
@@ -287,63 +277,30 @@ impl App {
             Ev::ScanFile(info) => {
                 let info = *info;
                 let candidate = is_candidate(&self.cfg, &info);
-                self.rows.push(RowItem {
-                    info,
-                    candidate,
-                    selected: candidate,
-                    status: RowStatus::Pending,
-                });
+                self.rows.push(RowItem { info, candidate, selected: candidate, status: RowStatus::Pending });
             }
             Ev::ScanError { path, msg } => {
                 if self.scan_errors.len() < 500 {
-                    self.scan_errors
-                        .push(format!("{}: {msg}", path.display()));
+                    self.scan_errors.push(format!("{}: {msg}", path.display()));
                 }
             }
-            Ev::ScanDone {
-                scanned,
-                errors,
-                elapsed_secs,
-            } => {
+            Ev::ScanDone { scanned, errors, elapsed_secs } => {
                 self.scanning = false;
                 self.scan_elapsed = elapsed_secs;
                 self.refresh_visible();
                 self.phase = Phase::Review;
                 let cands = self.rows.iter().filter(|r| r.candidate).count();
-                self.toast(format!(
-                    "scanned {scanned} files in {:.1}s · {cands} candidates · {errors} unreadable",
-                    elapsed_secs
-                ));
-                self.log.line(&format!(
-                    "scan done: {scanned} files probed, {cands} candidates, {} total, {errors} unreadable ({elapsed_secs:.1}s)",
-                    crate::fmt::bytes(self.candidate_bytes())
-                ));
+                self.toast(format!("scanned {scanned} files in {:.1}s · {cands} candidates · {errors} unreadable", elapsed_secs));
+                self.log.line(&format!("scan done: {scanned} files probed, {cands} candidates, {} total, {errors} unreadable ({elapsed_secs:.1}s)", crate::fmt::bytes(self.candidate_bytes())));
                 for err in &self.scan_errors {
                     self.log.line(&format!("scan error: {err}"));
                 }
             }
-            Ev::JobStarted {
-                id,
-                path,
-                duration_secs,
-                size_bytes,
-            } => {
+            Ev::JobStarted { id, path, duration_secs, size_bytes } => {
                 if let Some(enc) = &mut self.enc {
-                    let name = path
-                        .file_name()
-                        .map(|n| n.to_string_lossy().to_string())
-                        .unwrap_or_default();
+                    let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
                     if let Some(slot) = enc.slots.iter_mut().find(|s| s.id.is_none()) {
-                        *slot = Slot {
-                            id: Some(id),
-                            name,
-                            frac: 0.0,
-                            speed: 0.0,
-                            out_bytes: 0,
-                            dur: duration_secs,
-                            src_bytes: size_bytes,
-                            started: Some(Instant::now()),
-                        };
+                        *slot = Slot { id: Some(id), name, frac: 0.0, speed: 0.0, out_bytes: 0, dur: duration_secs, src_bytes: size_bytes, started: Some(Instant::now()) };
                     }
                 }
                 if let Some(row) = self.rows.iter_mut().find(|r| r.info.path == path) {
@@ -351,22 +308,9 @@ impl App {
                 }
                 self.log.line(&format!("start: {}", path.display()));
             }
-            Ev::JobProgress {
-                id,
-                out_secs,
-                speed,
-                out_bytes,
-            } => {
-                if let Some(slot) = self
-                    .enc
-                    .as_mut()
-                    .and_then(|enc| enc.slots.iter_mut().find(|s| s.id == Some(id)))
-                {
-                    slot.frac = if slot.dur > 0.0 {
-                        (out_secs / slot.dur).clamp(0.0, 1.0)
-                    } else {
-                        0.0
-                    };
+            Ev::JobProgress { id, out_secs, speed, out_bytes } => {
+                if let Some(slot) = self.enc.as_mut().and_then(|enc| enc.slots.iter_mut().find(|s| s.id == Some(id))) {
+                    slot.frac = if slot.dur > 0.0 { (out_secs / slot.dur).clamp(0.0, 1.0) } else { 0.0 };
                     slot.speed = speed;
                     slot.out_bytes = out_bytes;
                 }
@@ -408,18 +352,8 @@ impl App {
     fn log_encode_summary(&mut self, elapsed_secs: f64) {
         let Some(enc) = &self.enc else { return };
         let count = |o: Outcome| enc.results.iter().filter(|r| r.outcome == o).count();
-        let ok: u64 = enc
-            .results
-            .iter()
-            .filter(|r| r.outcome.is_success())
-            .map(|r| r.new_size)
-            .sum();
-        let before: u64 = enc
-            .results
-            .iter()
-            .filter(|r| r.outcome.is_success())
-            .map(|r| r.old_size)
-            .sum();
+        let ok: u64 = enc.results.iter().filter(|r| r.outcome.is_success()).map(|r| r.new_size).sum();
+        let before: u64 = enc.results.iter().filter(|r| r.outcome.is_success()).map(|r| r.old_size).sum();
         let line = format!(
             "encode done: {} replaced, {} dry-run, {} rejected, {} failed, {} cancelled · {} -> {} (freed {}) · {:.1}s",
             count(Outcome::Replaced),
@@ -434,8 +368,7 @@ impl App {
         );
         self.log.line(&line);
         if let Some(p) = &self.report_path {
-            self.log
-                .line(&format!("report written: {}", p.display()));
+            self.log.line(&format!("report written: {}", p.display()));
         }
         self.log.raw("\n");
     }
@@ -495,19 +428,11 @@ impl App {
             KeyCode::Char('f') => {
                 self.show_all = !self.show_all;
                 self.refresh_visible();
-                self.toast(if self.show_all {
-                    "showing all scanned files"
-                } else {
-                    "showing candidates only"
-                });
+                self.toast(if self.show_all { "showing all scanned files" } else { "showing candidates only" });
             }
             KeyCode::Char('d') => {
                 self.cfg.dry_run = !self.cfg.dry_run;
-                self.toast(if self.cfg.dry_run {
-                    "dry run ON — originals will not be touched"
-                } else {
-                    "dry run OFF — originals will be replaced"
-                });
+                self.toast(if self.cfg.dry_run { "dry run ON — originals will not be touched" } else { "dry run OFF — originals will be replaced" });
             }
             KeyCode::Char('r') => {
                 self.start_scan();
@@ -548,11 +473,7 @@ impl App {
                     if let Some(enc) = &mut self.enc {
                         enc.paused = paused;
                     }
-                    self.toast(if paused {
-                        "paused — running jobs finish, no new ones start"
-                    } else {
-                        "resumed"
-                    });
+                    self.toast(if paused { "paused — running jobs finish, no new ones start" } else { "resumed" });
                 }
             }
             KeyCode::Char('c') => {
@@ -627,8 +548,7 @@ impl App {
                 self.settings_idx = (self.settings_idx + 1) % Field::ALL.len();
             }
             KeyCode::Up | KeyCode::Char('k') => {
-                self.settings_idx =
-                    (self.settings_idx + Field::ALL.len() - 1) % Field::ALL.len();
+                self.settings_idx = (self.settings_idx + Field::ALL.len() - 1) % Field::ALL.len();
             }
             KeyCode::Enter | KeyCode::Char(' ') => {
                 let field = Field::ALL[self.settings_idx];
@@ -675,20 +595,13 @@ impl App {
     }
 
     pub fn toggle_all(&mut self) {
-        let any_unselected = self
-            .visible
-            .iter()
-            .any(|&i| self.rows[i].candidate && !self.rows[i].selected);
+        let any_unselected = self.visible.iter().any(|&i| self.rows[i].candidate && !self.rows[i].selected);
         for &i in &self.visible {
             if self.rows[i].candidate {
                 self.rows[i].selected = any_unselected;
             }
         }
-        self.toast(if any_unselected {
-            "selected all candidates"
-        } else {
-            "deselected all"
-        });
+        self.toast(if any_unselected { "selected all candidates" } else { "deselected all" });
     }
 
     pub fn selected_count(&self) -> usize {
@@ -696,11 +609,7 @@ impl App {
     }
 
     pub fn selected_bytes(&self) -> u64 {
-        self.rows
-            .iter()
-            .filter(|r| r.candidate && r.selected)
-            .map(|r| r.info.size_bytes)
-            .sum()
+        self.rows.iter().filter(|r| r.candidate && r.selected).map(|r| r.info.size_bytes).sum()
     }
 
     pub fn candidate_count(&self) -> usize {
@@ -708,44 +617,19 @@ impl App {
     }
 
     pub fn candidate_bytes(&self) -> u64 {
-        self.rows
-            .iter()
-            .filter(|r| r.candidate)
-            .map(|r| r.info.size_bytes)
-            .sum()
+        self.rows.iter().filter(|r| r.candidate).map(|r| r.info.size_bytes).sum()
     }
 
     pub fn refresh_visible(&mut self) {
-        let mut idx: Vec<usize> = self
-            .rows
-            .iter()
-            .enumerate()
-            .filter(|(_, r)| self.show_all || r.candidate)
-            .map(|(i, _)| i)
-            .collect();
+        let mut idx: Vec<usize> = self.rows.iter().enumerate().filter(|(_, r)| self.show_all || r.candidate).map(|(i, _)| i).collect();
         let rows = &self.rows;
         match self.sort {
             SortMode::Size => idx.sort_by_key(|&i| std::cmp::Reverse(rows[i].info.size_bytes)),
-            SortMode::Bitrate => {
-                idx.sort_by_key(|&i| std::cmp::Reverse(rows[i].info.bitrate_bps))
-            }
+            SortMode::Bitrate => idx.sort_by_key(|&i| std::cmp::Reverse(rows[i].info.bitrate_bps)),
             SortMode::Duration => {
-                idx.sort_by(|&a, &b| {
-                    rows[b]
-                        .info
-                        .duration_secs
-                        .partial_cmp(&rows[a].info.duration_secs)
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                });
+                idx.sort_by(|&a, &b| rows[b].info.duration_secs.partial_cmp(&rows[a].info.duration_secs).unwrap_or(std::cmp::Ordering::Equal));
             }
-            SortMode::Name => idx.sort_by(|&a, &b| {
-                rows[a]
-                    .info
-                    .path
-                    .to_string_lossy()
-                    .to_lowercase()
-                    .cmp(&rows[b].info.path.to_string_lossy().to_lowercase())
-            }),
+            SortMode::Name => idx.sort_by(|&a, &b| rows[a].info.path.to_string_lossy().to_lowercase().cmp(&rows[b].info.path.to_string_lossy().to_lowercase())),
         }
         self.visible = idx;
         if self.visible.is_empty() {
@@ -759,11 +643,7 @@ impl App {
     /// The files that will be encoded, in the order they are shown in the
     /// table (so the current sort decides the processing order).
     pub fn selected_jobs(&self) -> Vec<MediaInfo> {
-        self.visible
-            .iter()
-            .filter(|&&i| self.rows[i].candidate && self.rows[i].selected)
-            .map(|&i| self.rows[i].info.clone())
-            .collect()
+        self.visible.iter().filter(|&&i| self.rows[i].candidate && self.rows[i].selected).map(|&i| self.rows[i].info.clone()).collect()
     }
 
     fn start_encoding(&mut self) {
@@ -774,36 +654,19 @@ impl App {
         }
         let total = jobs.len();
         let slots = (0..self.cfg.parallelism.max(1)).map(|_| Slot::empty()).collect();
-        self.enc = Some(EncodeState {
-            total,
-            completed: 0,
-            started: Instant::now(),
-            slots,
-            results: Vec::new(),
-            paused: false,
-            cancelling: false,
-            elapsed: 0.0,
-            finished: false,
-        });
+        self.enc = Some(EncodeState { total, completed: 0, started: Instant::now(), slots, results: Vec::new(), paused: false, cancelling: false, elapsed: 0.0, finished: false });
         for row in self.rows.iter_mut() {
             if row.candidate && row.selected {
                 row.status = RowStatus::Pending;
             }
         }
         let opts = EncodeOpts::from_config(&self.cfg);
-        self.log.line(&format!(
-            "encode start: {total} files, {} workers, dry_run={}, keep_backup={}",
-            self.cfg.parallelism, self.cfg.dry_run, self.cfg.keep_backup
-        ));
+        self.log.line(&format!("encode start: {total} files, {} workers, dry_run={}, keep_backup={}", self.cfg.parallelism, self.cfg.dry_run, self.cfg.keep_backup));
         let (control, handle) = encode::start(jobs, opts, self.tx.clone());
         self.control = Some(control);
         self.coordinator = Some(handle);
         self.phase = Phase::Encoding;
-        self.toast(format!(
-            "encoding {total} files with {} workers{}",
-            self.cfg.parallelism,
-            if self.cfg.dry_run { " (dry run)" } else { "" }
-        ));
+        self.toast(format!("encoding {total} files with {} workers{}", self.cfg.parallelism, if self.cfg.dry_run { " (dry run)" } else { "" }));
     }
 
     /// Called on exit: stop workers and wait for them so no ffmpeg is orphaned.
@@ -817,13 +680,8 @@ impl App {
     }
 }
 
-
 pub fn is_candidate(cfg: &Config, info: &MediaInfo) -> bool {
-    info.has_video
-        && info.duration_secs > 0.0
-        && info.bitrate_bps > cfg.threshold_bps()
-        && info.size_bytes >= cfg.min_size_bytes()
-        && !(cfg.skip_av1 && info.is_av1())
+    info.has_video && info.duration_secs > 0.0 && info.bitrate_bps > cfg.threshold_bps() && info.size_bytes >= cfg.min_size_bytes() && !(cfg.skip_av1 && info.is_av1())
 }
 
 // --------------------------------------------------------------------- settings
@@ -903,10 +761,7 @@ impl Field {
     }
 
     pub fn is_bool(self) -> bool {
-        matches!(
-            self,
-            Field::SkipAv1 | Field::Faststart | Field::DryRun | Field::KeepBackup
-        )
+        matches!(self, Field::SkipAv1 | Field::Faststart | Field::DryRun | Field::KeepBackup)
     }
 
     pub fn value(self, cfg: &Config) -> String {
@@ -967,11 +822,7 @@ impl Field {
     }
 }
 
-fn parse_num<T: std::str::FromStr + PartialOrd + std::fmt::Display>(
-    s: &str,
-    min: T,
-    max: T,
-) -> Result<T, String> {
+fn parse_num<T: std::str::FromStr + PartialOrd + std::fmt::Display>(s: &str, min: T, max: T) -> Result<T, String> {
     let v: T = s.parse().map_err(|_| format!("not a number: {s}"))?;
     if v < min || v > max {
         return Err(format!("must be between {min} and {max}"));

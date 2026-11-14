@@ -65,13 +65,7 @@ impl Default for Config {
             ffmpeg: default_tool("ffmpeg"),
             ffprobe: default_tool("ffprobe"),
             ffmpeg_extra_args: Vec::new(),
-            extensions: [
-                "mp4", "m4v", "mkv", "avi", "mov", "wmv", "ts", "webm", "flv", "mpg", "mpeg",
-                "m2ts", "divx", "3gp",
-            ]
-            .iter()
-            .map(|s| s.to_string())
-            .collect(),
+            extensions: ["mp4", "m4v", "mkv", "avi", "mov", "wmv", "ts", "webm", "flv", "mpg", "mpeg", "m2ts", "divx", "3gp"].iter().map(|s| s.to_string()).collect(),
         }
     }
 }
@@ -86,10 +80,7 @@ impl Config {
                     let note = cfg.resolve_tools();
                     (cfg, note)
                 }
-                Err(e) => (
-                    Config::default(),
-                    Some(format!("config parse error ({e}); using defaults")),
-                ),
+                Err(e) => (Config::default(), Some(format!("config parse error ({e}); using defaults"))),
             },
             Err(_) => {
                 let mut cfg = Config::default();
@@ -127,11 +118,7 @@ impl Config {
             }
             None => notes.push(format!("{} NOT FOUND", exe_name("ffprobe"))),
         }
-        if notes.is_empty() {
-            None
-        } else {
-            Some(notes.join(" | "))
-        }
+        if notes.is_empty() { None } else { Some(notes.join(" | ")) }
     }
 
     pub fn tools_ok(&self) -> bool {
@@ -158,15 +145,7 @@ impl Config {
 
     /// One-line summary of the encode preset, used in the header.
     pub fn preset_summary(&self) -> String {
-        format!(
-            "AV1/SVT crf{} p{} · AAC {}k {}ch · thr {} kbps · {} jobs",
-            self.crf,
-            self.preset,
-            self.audio_bitrate_kbps,
-            self.audio_channels,
-            self.bitrate_threshold_kbps,
-            self.parallelism
-        )
+        format!("AV1/SVT crf{} p{} · AAC {}k {}ch · thr {} kbps · {} jobs", self.crf, self.preset, self.audio_bitrate_kbps, self.audio_channels, self.bitrate_threshold_kbps, self.parallelism)
     }
 }
 
@@ -197,11 +176,7 @@ fn resolve_tool(preferred: &Path, base: &str) -> Option<PathBuf> {
 
 /// `ffmpeg` on unix, `ffmpeg.exe` on Windows.
 fn exe_name(base: &str) -> String {
-    if cfg!(windows) {
-        format!("{base}.exe")
-    } else {
-        base.to_string()
-    }
+    if cfg!(windows) { format!("{base}.exe") } else { base.to_string() }
 }
 
 /// Default tool path: the known Windows install dir, otherwise the bare name

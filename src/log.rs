@@ -22,20 +22,13 @@ pub struct RunLog {
 impl RunLog {
     /// A log that writes nowhere (used by tests).
     pub fn disabled() -> Self {
-        Self {
-            path: None,
-            file: None,
-            started: fmt::local_now(),
-            error: None,
-        }
+        Self { path: None, file: None, started: fmt::local_now(), error: None }
     }
 
     /// Create the log next to the executable, falling back to the working
     /// directory if that is not writable.
     pub fn create(cfg: &Config) -> Self {
-        let exe_dir = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|d| d.to_path_buf()));
+        let exe_dir = std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.to_path_buf()));
         if let Some(dir) = exe_dir {
             let log = Self::create_in(&dir, cfg);
             if log.file.is_some() {
@@ -45,22 +38,14 @@ impl RunLog {
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let mut log = Self::create_in(&cwd, cfg);
         if log.file.is_some() {
-            log.error = Some(format!(
-                "exe folder not writable, log written to {}",
-                cwd.display()
-            ));
+            log.error = Some(format!("exe folder not writable, log written to {}", cwd.display()));
         }
         log
     }
 
     pub fn create_in(dir: &Path, cfg: &Config) -> Self {
         let started = fmt::local_now();
-        let mut log = Self {
-            path: None,
-            file: None,
-            started,
-            error: None,
-        };
+        let mut log = Self { path: None, file: None, started, error: None };
 
         let base = format!("log-{}", started.stamp());
         let mut candidate = dir.join(format!("{base}.txt"));
@@ -70,11 +55,7 @@ impl RunLog {
             n += 1;
         }
 
-        match OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&candidate)
-        {
+        match OpenOptions::new().create(true).append(true).open(&candidate) {
             Ok(file) => {
                 log.path = Some(candidate);
                 log.file = Some(file);
@@ -101,9 +82,7 @@ impl RunLog {
 
     fn write_header(&mut self, cfg: &Config) {
         let started = self.started.datetime();
-        let exe = std::env::current_exe()
-            .map(|p| p.display().to_string())
-            .unwrap_or_else(|_| "?".into());
+        let exe = std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_else(|_| "?".into());
         self.raw(&format!(
             "vid-quality-controller — run log\n\
              started : {started}\n\
@@ -162,37 +141,10 @@ impl RunLog {
             Outcome::Failed => "FAILED",
             Outcome::Cancelled => "cancelled",
         };
-        let sizes = if r.new_size > 0 {
-            format!(
-                "{} -> {} ({:+.1}%)",
-                fmt::bytes(r.old_size),
-                fmt::bytes(r.new_size),
-                -r.saved_pct()
-            )
-        } else {
-            format!("{} (kept)", fmt::bytes(r.old_size))
-        };
-        let bitrates = if r.new_bitrate_bps > 0 {
-            format!(
-                "{} -> {}",
-                fmt::bitrate(r.old_bitrate_bps),
-                fmt::bitrate(r.new_bitrate_bps)
-            )
-        } else {
-            fmt::bitrate(r.old_bitrate_bps)
-        };
-        let lengths = if r.new_duration > 0.0 {
-            format!("{:.2}s -> {:.2}s", r.old_duration, r.new_duration)
-        } else {
-            format!("{:.2}s", r.old_duration)
-        };
-        self.line(&format!(
-            "[{tag}] {} | {sizes} | {bitrates} | {lengths} | encode {:.1}s, total {:.1}s | {}",
-            r.path.display(),
-            r.encode_secs,
-            r.total_secs,
-            r.note
-        ));
+        let sizes = if r.new_size > 0 { format!("{} -> {} ({:+.1}%)", fmt::bytes(r.old_size), fmt::bytes(r.new_size), -r.saved_pct()) } else { format!("{} (kept)", fmt::bytes(r.old_size)) };
+        let bitrates = if r.new_bitrate_bps > 0 { format!("{} -> {}", fmt::bitrate(r.old_bitrate_bps), fmt::bitrate(r.new_bitrate_bps)) } else { fmt::bitrate(r.old_bitrate_bps) };
+        let lengths = if r.new_duration > 0.0 { format!("{:.2}s -> {:.2}s", r.old_duration, r.new_duration) } else { format!("{:.2}s", r.old_duration) };
+        self.line(&format!("[{tag}] {} | {sizes} | {bitrates} | {lengths} | encode {:.1}s, total {:.1}s | {}", r.path.display(), r.encode_secs, r.total_secs, r.note));
         if !r.detail.is_empty() {
             self.detail(&r.detail);
         }
@@ -221,11 +173,7 @@ mod tests {
         assert!(name.starts_with("log-"), "unexpected name: {name}");
         assert!(name.ends_with(".txt"), "unexpected name: {name}");
         // log-YYYY-MM-DD-HHMMSS.txt
-        assert_eq!(
-            name.len(),
-            "log-2026-10-12-016530.txt".len(),
-            "unexpected name shape: {name}"
-        );
+        assert_eq!(name.len(), "log-2026-10-12-016530.txt".len(), "unexpected name shape: {name}");
         assert_eq!(path.parent(), Some(dir.as_path()));
 
         first.line("hello");

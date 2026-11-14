@@ -4,6 +4,10 @@
 //!   -v: libsvtav1 -crf 35 -preset 6 -pix_fmt yuv420p  (resolution & fps untouched)
 //!   -a: aac -b:a 160k -ac 2
 //!
+//! The muxer is always forced with `-f` (see `Container`): ffmpeg would otherwise
+//! pick it from the output extension and reject AV1/AAC there (e.g. `.m4v` selects
+//! the iPod muxer, which cannot hold AV1).
+//!
 //! A job is only allowed to replace the original when the produced file
 //!   * probes cleanly and still has a video stream,
 //!   * has the same duration within tolerance,
@@ -84,21 +88,13 @@ pub struct JobError {
 
 impl JobError {
     fn with_detail(message: impl Into<String>, detail: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-            detail: detail.into(),
-            elapsed_secs: 0.0,
-        }
+        Self { message: message.into(), detail: detail.into(), elapsed_secs: 0.0 }
     }
 }
 
 impl From<anyhow::Error> for JobError {
     fn from(e: anyhow::Error) -> Self {
-        Self {
-            message: format!("{e:#}"),
-            detail: String::new(),
-            elapsed_secs: 0.0,
-        }
+        Self { message: format!("{e:#}"), detail: String::new(), elapsed_secs: 0.0 }
     }
 }
 
@@ -114,18 +110,10 @@ impl JobResult {
     /// Bytes freed. Zero for any outcome where nothing was actually replaced
     /// (rejected / failed / cancelled), since `new_size` is 0 there.
     pub fn saved_bytes(&self) -> i64 {
-        if self.new_size == 0 || !self.outcome.is_success() {
-            0
-        } else {
-            self.old_size as i64 - self.new_size as i64
-        }
+        if self.new_size == 0 || !self.outcome.is_success() { 0 } else { self.old_size as i64 - self.new_size as i64 }
     }
     pub fn saved_pct(&self) -> f64 {
-        if self.old_size == 0 || self.saved_bytes() == 0 {
-            0.0
-        } else {
-            self.saved_bytes() as f64 * 100.0 / self.old_size as f64
-        }
+        if self.old_size == 0 || self.saved_bytes() == 0 { 0.0 } else { self.saved_bytes() as f64 * 100.0 / self.old_size as f64 }
     }
 }
 
@@ -175,11 +163,7 @@ pub struct Control {
 
 impl Control {
     fn new() -> Self {
-        Self {
-            paused: AtomicBool::new(false),
-            cancelled: AtomicBool::new(false),
-            pids: Mutex::new(HashMap::new()),
-        }
+        Self { paused: AtomicBool::new(false), cancelled: AtomicBool::new(false), pids: Mutex::new(HashMap::new()) }
     }
     pub fn is_paused(&self) -> bool {
         self.paused.load(Ordering::Relaxed)
@@ -218,11 +202,7 @@ impl Control {
 
 /// Spawn the worker pool. Returns the control handle and the coordinator
 /// thread, which joins every worker and then emits `Ev::EncodeDone`.
-pub fn start(
-    jobs: Vec<MediaInfo>,
-    opts: EncodeOpts,
-    tx: Sender<Ev>,
-) -> (Arc<Control>, thread::JoinHandle<()>) {
+pub fn start(jobs: Vec<MediaInfo>, opts: EncodeOpts, tx: Sender<Ev>) -> (Arc<Control>, thread::JoinHandle<()>) {
     let control = Arc::new(Control::new());
     let queue = Arc::new(Mutex::new(VecDeque::from(jobs)));
     let opts = Arc::new(opts);
@@ -237,43 +217,41 @@ pub fn start(
             let control = Arc::clone(&control2);
             let opts = Arc::clone(&opts);
             let tx = tx.clone();
-            handles.push(thread::spawn(move || loop {
-                if control.is_cancelled() {
-                    break;
-                }
-                while control.is_paused() && !control.is_cancelled() {
-                    thread::sleep(Duration::from_millis(120));
-                }
-                if control.is_cancelled() {
-                    break;
-                }
-                let next = queue.lock().ok().and_then(|mut q| q.pop_front());
-                let Some(job) = next else { break };
-                let result = run_job(&job, &opts, &control, &tx);
-                match result {
-                    Ok(res) => {
-                        let _ = tx.send(Ev::JobFinished(Box::new(res)));
+            handles.push(thread::spawn(move || {
+                loop {
+                    if control.is_cancelled() {
+                        break;
                     }
-                    Err(e) => {
-                        let _ = tx.send(Ev::JobFinished(Box::new(JobResult {
-                            path: job.path.clone(),
-                            final_path: job.path.clone(),
-                            outcome: if control.is_cancelled() {
-                                Outcome::Cancelled
-                            } else {
-                                Outcome::Failed
-                            },
-                            old_size: job.size_bytes,
-                            new_size: 0,
-                            old_bitrate_bps: job.bitrate_bps,
-                            new_bitrate_bps: 0,
-                            old_duration: job.duration_secs,
-                            new_duration: 0.0,
-                            encode_secs: e.elapsed_secs,
-                            total_secs: e.elapsed_secs,
-                            note: e.message,
-                            detail: e.detail,
-                        })));
+                    while control.is_paused() && !control.is_cancelled() {
+                        thread::sleep(Duration::from_millis(120));
+                    }
+                    if control.is_cancelled() {
+                        break;
+                    }
+                    let next = queue.lock().ok().and_then(|mut q| q.pop_front());
+                    let Some(job) = next else { break };
+                    let result = run_job(&job, &opts, &control, &tx);
+                    match result {
+                        Ok(res) => {
+                            let _ = tx.send(Ev::JobFinished(Box::new(res)));
+                        }
+                        Err(e) => {
+                            let _ = tx.send(Ev::JobFinished(Box::new(JobResult {
+                                path: job.path.clone(),
+                                final_path: job.path.clone(),
+                                outcome: if control.is_cancelled() { Outcome::Cancelled } else { Outcome::Failed },
+                                old_size: job.size_bytes,
+                                new_size: 0,
+                                old_bitrate_bps: job.bitrate_bps,
+                                new_bitrate_bps: 0,
+                                old_duration: job.duration_secs,
+                                new_duration: 0.0,
+                                encode_secs: e.elapsed_secs,
+                                total_secs: e.elapsed_secs,
+                                note: e.message,
+                                detail: e.detail,
+                            })));
+                        }
                     }
                 }
             }));
@@ -281,49 +259,31 @@ pub fn start(
         for h in handles {
             let _ = h.join();
         }
-        let _ = tx.send(Ev::EncodeDone {
-            elapsed_secs: started.elapsed().as_secs_f64(),
-        });
+        let _ = tx.send(Ev::EncodeDone { elapsed_secs: started.elapsed().as_secs_f64() });
     });
 
     (control, coordinator)
 }
 
-fn run_job(
-    job: &MediaInfo,
-    opts: &EncodeOpts,
-    control: &Arc<Control>,
-    tx: &Sender<Ev>,
-) -> Result<JobResult, JobError> {
+fn run_job(job: &MediaInfo, opts: &EncodeOpts, control: &Arc<Control>, tx: &Sender<Ev>) -> Result<JobResult, JobError> {
     let t0 = Instant::now();
     let (final_path, container) = output_target(&job.path);
     let tmp_dir = tmp_dir_for(&job.path);
     if tmp_dir.exists() {
         let _ = std::fs::remove_dir_all(&tmp_dir);
     }
-    std::fs::create_dir_all(&tmp_dir)
-        .with_context(|| format!("creating temp dir {}", tmp_dir.display()))?;
-    let out_name = final_path
-        .file_name()
-        .ok_or_else(|| anyhow!("no file name"))?
-        .to_string_lossy()
-        .to_string();
+    std::fs::create_dir_all(&tmp_dir).with_context(|| format!("creating temp dir {}", tmp_dir.display()))?;
+    let out_name = final_path.file_name().ok_or_else(|| anyhow!("no file name"))?.to_string_lossy().to_string();
     let out_path = tmp_dir.join(&out_name);
 
-    let _ = tx.send(Ev::JobStarted {
-        id: job_id(&job.path),
-        path: job.path.clone(),
-        duration_secs: job.duration_secs,
-        size_bytes: job.size_bytes,
-    });
+    let _ = tx.send(Ev::JobStarted { id: job_id(&job.path), path: job.path.clone(), duration_secs: job.duration_secs, size_bytes: job.size_bytes });
 
-    let result = encode_and_verify(job, opts, control, tx, &out_path, &container, &final_path, t0)
-        .map_err(|mut e| {
-            if e.elapsed_secs <= 0.0 {
-                e.elapsed_secs = t0.elapsed().as_secs_f64();
-            }
-            e
-        });
+    let result = encode_and_verify(job, opts, control, tx, &out_path, container, &final_path, t0).map_err(|mut e| {
+        if e.elapsed_secs <= 0.0 {
+            e.elapsed_secs = t0.elapsed().as_secs_f64();
+        }
+        e
+    });
 
     // Always clean the temp folder.
     let _ = std::fs::remove_dir_all(&tmp_dir);
@@ -338,7 +298,7 @@ fn encode_and_verify(
     control: &Arc<Control>,
     tx: &Sender<Ev>,
     out_path: &Path,
-    container: &str,
+    container: Container,
     final_path: &Path,
     t0: Instant,
 ) -> Result<JobResult, JobError> {
@@ -357,17 +317,18 @@ fn encode_and_verify(
         .args(["-c:a", "aac"])
         .args(["-b:a", &format!("{}k", opts.audio_bitrate_kbps)])
         .args(["-ac", &opts.audio_channels.to_string()]);
-    if container == "mp4" && opts.faststart {
+    if container == Container::Mp4 && opts.faststart {
         cmd.args(["-movflags", "+faststart"]);
     }
     for a in &opts.extra_args {
         cmd.arg(a);
     }
-    cmd.arg(out_path);
+    // Force the muxer: never let the output extension pick the format, since some
+    // extensions map to muxers that reject AV1 (ipod/m4v, mov) or AAC (webm).
+    // This goes after the extra args so it cannot be overridden by accident.
+    cmd.args(["-f", container.muxer()]).arg(out_path);
 
-    cmd.stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+    cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -375,9 +336,7 @@ fn encode_and_verify(
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
 
-    let mut child = cmd
-        .spawn()
-        .with_context(|| format!("spawning {}", opts.ffmpeg.display()))?;
+    let mut child = cmd.spawn().with_context(|| format!("spawning {}", opts.ffmpeg.display()))?;
     let command_line = command_line(&cmd);
     let pid = child.id();
     control.register(job_id, pid);
@@ -439,12 +398,7 @@ fn encode_and_verify(
                     if last_emit.elapsed() >= Duration::from_millis(180) {
                         last_emit = Instant::now();
                         let out_bytes = std::fs::metadata(out_path).map(|m| m.len()).unwrap_or(0);
-                        let _ = tx.send(Ev::JobProgress {
-                            id: job_id,
-                            out_secs: last_secs,
-                            speed: last_speed,
-                            out_bytes,
-                        });
+                        let _ = tx.send(Ev::JobProgress { id: job_id, out_secs: last_secs, speed: last_speed, out_bytes });
                     }
                 }
                 _ => {}
@@ -459,12 +413,7 @@ fn encode_and_verify(
 
     // Final progress tick regardless of throttling.
     let out_bytes = std::fs::metadata(out_path).map(|m| m.len()).unwrap_or(0);
-    let _ = tx.send(Ev::JobProgress {
-        id: job_id,
-        out_secs: last_secs.max(job.duration_secs),
-        speed: last_speed,
-        out_bytes,
-    });
+    let _ = tx.send(Ev::JobProgress { id: job_id, out_secs: last_secs.max(job.duration_secs), speed: last_speed, out_bytes });
 
     if cancelled || control.is_cancelled() {
         let _ = std::fs::remove_file(out_path);
@@ -486,25 +435,11 @@ fn encode_and_verify(
     }
 
     if !status.success() {
-        let tail: Vec<String> = stderr_tail
-            .lock()
-            .map(|t| t.iter().cloned().collect())
-            .unwrap_or_default();
+        let tail: Vec<String> = stderr_tail.lock().map(|t| t.iter().cloned().collect()).unwrap_or_default();
         let _ = std::fs::remove_file(out_path);
-        let reached = if job.duration_secs > 0.0 {
-            format!(
-                "{:.0}% of {}",
-                (last_secs / job.duration_secs * 100.0).clamp(0.0, 100.0),
-                crate::fmt::duration(job.duration_secs)
-            )
-        } else {
-            "?".to_string()
-        };
-        let mut detail = format!(
-            "exit: {status}\nsource: {}\nreached: {reached} after {encode_secs:.1}s\ncommand: {command_line}\nstderr:"
-            ,
-            job.path.display()
-        );
+        let reached =
+            if job.duration_secs > 0.0 { format!("{:.0}% of {}", (last_secs / job.duration_secs * 100.0).clamp(0.0, 100.0), crate::fmt::duration(job.duration_secs)) } else { "?".to_string() };
+        let mut detail = format!("exit: {status}\nsource: {}\nreached: {reached} after {encode_secs:.1}s\ncommand: {command_line}\nstderr:", job.path.display());
         if tail.is_empty() {
             detail.push_str(" (none)\n");
         } else {
@@ -517,11 +452,7 @@ fn encode_and_verify(
         }
         // Lead with the error itself: the row in the UI only has room for the
         // start of it, and the timings/exit code are already in the log line.
-        let note = if tail.is_empty() {
-            format!("at {reached} · ffmpeg {status} with no error output (killed?)")
-        } else {
-            format!("at {reached} · {}", summarize_stderr(&tail))
-        };
+        let note = if tail.is_empty() { format!("at {reached} · ffmpeg {status} with no error output (killed?)") } else { format!("at {reached} · {}", summarize_stderr(&tail)) };
         return Err(JobError::with_detail(note, detail));
     }
 
@@ -535,35 +466,15 @@ fn encode_and_verify(
     let delta = (info.duration_secs - job.duration_secs).abs();
     if job.duration_secs > 0.0 && delta > tolerance {
         let _ = std::fs::remove_file(out_path);
-        return Ok(rejected(
-            job,
-            final_path,
-            encode_secs,
-            format!(
-                "duration mismatch: {:.2}s vs {:.2}s (tolerance {:.2}s)",
-                info.duration_secs, job.duration_secs, tolerance
-            ),
-        ));
+        return Ok(rejected(job, final_path, encode_secs, format!("duration mismatch: {:.2}s vs {:.2}s (tolerance {:.2}s)", info.duration_secs, job.duration_secs, tolerance)));
     }
     if info.size_bytes >= job.size_bytes {
         let _ = std::fs::remove_file(out_path);
-        return Ok(rejected(
-            job,
-            final_path,
-            encode_secs,
-            format!(
-                "encoded file is not smaller ({} vs {})",
-                crate::fmt::bytes(info.size_bytes),
-                crate::fmt::bytes(job.size_bytes)
-            ),
-        ));
+        return Ok(rejected(job, final_path, encode_secs, format!("encoded file is not smaller ({} vs {})", crate::fmt::bytes(info.size_bytes), crate::fmt::bytes(job.size_bytes))));
     }
 
     let new_bitrate = info.bitrate_bps;
-    let mut note = format!(
-        "duration delta {:+.2}s",
-        info.duration_secs - job.duration_secs
-    );
+    let mut note = format!("duration delta {:+.2}s", info.duration_secs - job.duration_secs);
     if final_path != job.path {
         note.push_str(&format!(" · renamed to .{}", ext_of(final_path)));
     }
@@ -634,8 +545,7 @@ fn replace_original(orig: &Path, new: &Path, final_path: &Path, keep_backup: boo
         sibling(orig, ".vqc-bak")
     };
 
-    std::fs::rename(orig, &backup)
-        .with_context(|| format!("moving original aside: {}", orig.display()))?;
+    std::fs::rename(orig, &backup).with_context(|| format!("moving original aside: {}", orig.display()))?;
     if let Err(e) = std::fs::rename(new, final_path) {
         let _ = std::fs::rename(&backup, orig);
         return Err(anyhow!("installing encoded file: {e}"));
@@ -646,20 +556,37 @@ fn replace_original(orig: &Path, new: &Path, final_path: &Path, keep_backup: boo
     Ok(())
 }
 
-fn output_target(orig: &Path) -> (PathBuf, String) {
-    let ext = ext_of(orig);
-    match ext.as_str() {
-        "mp4" | "m4v" | "mov" => (orig.to_path_buf(), "mp4".to_string()),
-        "mkv" | "webm" => (orig.to_path_buf(), "mkv".to_string()),
-        _ => (orig.with_extension("mkv"), "mkv".to_string()),
+/// Output container, used both to pick the muxer and for the `.mkv` renaming.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Container {
+    Mp4,
+    Matroska,
+}
+
+impl Container {
+    /// ffmpeg muxer name, always passed as `-f <muxer>`.
+    fn muxer(self) -> &'static str {
+        match self {
+            Container::Mp4 => "mp4",
+            Container::Matroska => "matroska",
+        }
+    }
+}
+
+/// Where to write the result and which muxer to use for it.
+fn output_target(orig: &Path) -> (PathBuf, Container) {
+    match ext_of(orig).as_str() {
+        // ISO-BMFF family: keep the name, but always mux as mp4 (`m4v` would
+        // otherwise select the AV1-less iPod muxer, `mov` the AV1-less mov one).
+        "mp4" | "m4v" | "mov" => (orig.to_path_buf(), Container::Mp4),
+        "mkv" => (orig.to_path_buf(), Container::Matroska),
+        // webm's muxer refuses AAC, every other container cannot hold AV1 at all.
+        _ => (orig.with_extension("mkv"), Container::Matroska),
     }
 }
 
 fn ext_of(p: &Path) -> String {
-    p.extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase()
+    p.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase()
 }
 
 fn sibling(p: &Path, suffix: &str) -> PathBuf {
@@ -669,11 +596,7 @@ fn sibling(p: &Path, suffix: &str) -> PathBuf {
 }
 
 fn tmp_dir_for(orig: &Path) -> PathBuf {
-    orig.parent().unwrap_or(Path::new(".")).join(format!(
-        ".vqc-tmp-{}-{:x}",
-        std::process::id(),
-        job_id(orig)
-    ))
+    orig.parent().unwrap_or(Path::new(".")).join(format!(".vqc-tmp-{}-{:x}", std::process::id(), job_id(orig)))
 }
 
 pub fn job_id(path: &Path) -> u64 {
@@ -684,11 +607,7 @@ pub fn job_id(path: &Path) -> u64 {
 }
 
 fn truncate(s: &str, max: usize) -> String {
-    if s.chars().count() <= max {
-        s.to_string()
-    } else {
-        s.chars().take(max).collect::<String>() + "…"
-    }
+    if s.chars().count() <= max { s.to_string() } else { s.chars().take(max).collect::<String>() + "…" }
 }
 
 /// Rebuild the ffmpeg command line for the log (quoting args with spaces).
@@ -718,18 +637,9 @@ fn command_line(cmd: &Command) -> String {
 fn summarize_stderr(tail: &[String]) -> String {
     let specific = tail.iter().rev().find(|line| {
         let l = line.to_ascii_lowercase();
-        (l.contains("error")
-            || l.contains("unable")
-            || l.contains("no space")
-            || l.contains("invalid")
-            || l.contains("denied")
-            || l.contains("cannot"))
-            && !l.contains("conversion failed")
+        (l.contains("error") || l.contains("unable") || l.contains("no space") || l.contains("invalid") || l.contains("denied") || l.contains("cannot")) && !l.contains("conversion failed")
     });
-    let chosen = specific
-        .or_else(|| tail.iter().rev().find(|l| !l.trim().is_empty()))
-        .map(|s| s.trim())
-        .unwrap_or("no error output from ffmpeg");
+    let chosen = specific.or_else(|| tail.iter().rev().find(|l| !l.trim().is_empty())).map(|s| s.trim()).unwrap_or("no error output from ffmpeg");
     truncate(chosen, 300)
 }
 
@@ -738,12 +648,7 @@ fn kill_pid(pid: u32) {
     {
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        let _ = Command::new("taskkill")
-            .args(["/F", "/T", "/PID", &pid.to_string()])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .creation_flags(CREATE_NO_WINDOW)
-            .status();
+        let _ = Command::new("taskkill").args(["/F", "/T", "/PID", &pid.to_string()]).stdout(Stdio::null()).stderr(Stdio::null()).creation_flags(CREATE_NO_WINDOW).status();
     }
     #[cfg(not(windows))]
     {
@@ -794,14 +699,22 @@ mod tests {
     #[test]
     fn container_targets() {
         let (p, c) = output_target(Path::new("x/a.mp4"));
-        assert_eq!((p.to_str(), c.as_str()), (Some("x/a.mp4"), "mp4"));
+        assert_eq!((p.to_str(), c), (Some("x/a.mp4"), Container::Mp4));
         let (p, c) = output_target(Path::new("x/a.MKV"));
-        assert_eq!((p.to_str(), c.as_str()), (Some("x/a.MKV"), "mkv"));
-        // Containers that cannot hold AV1 get renamed to mkv.
-        let (p, _) = output_target(Path::new("x/a.avi"));
-        assert_eq!(p.to_str(), Some("x/a.mkv"));
-        let (p, _) = output_target(Path::new("x/a.ts"));
-        assert_eq!(p.to_str(), Some("x/a.mkv"));
+        assert_eq!((p.to_str(), c), (Some("x/a.MKV"), Container::Matroska));
+        // m4v/mov keep their name but must be muxed as mp4: the m4v extension
+        // selects the iPod muxer, which cannot hold AV1.
+        for name in ["x/a.m4v", "x/a.MOV"] {
+            let (p, c) = output_target(Path::new(name));
+            assert_eq!((p.to_str(), c), (Some(name), Container::Mp4));
+            assert_eq!(c.muxer(), "mp4");
+        }
+        // Containers that cannot hold AV1 (or AAC, for webm) get renamed to mkv.
+        for name in ["x/a.avi", "x/a.ts", "x/a.webm"] {
+            let (p, c) = output_target(Path::new(name));
+            assert_eq!(p.to_str(), Some("x/a.mkv"), "{name}");
+            assert_eq!(c.muxer(), "matroska", "{name}");
+        }
     }
 
     #[test]
@@ -825,10 +738,7 @@ mod tests {
         replace_original(&orig, &staged, &orig, false).unwrap();
         assert_eq!(std::fs::read(&orig).unwrap(), b"NEW");
         assert!(!staged.exists(), "staged file should have been moved");
-        assert!(
-            !sibling(&orig, ".vqc-bak").exists(),
-            "backup should be removed when keep_backup is off"
-        );
+        assert!(!sibling(&orig, ".vqc-bak").exists(), "backup should be removed when keep_backup is off");
 
         // keep_backup keeps the original content around.
         let staged2 = dir.join("staged2.mp4");
@@ -848,11 +758,8 @@ mod stderr_tests {
 
     #[test]
     fn picks_the_specific_error_not_the_generic_tail() {
-        let tail = vec![
-            "[libx264 @ 0000] using cpu capabilities".to_string(),
-            "Error while decoding stream #0:0: Invalid data found when processing input".to_string(),
-            "Conversion failed!".to_string(),
-        ];
+        let tail =
+            vec!["[libx264 @ 0000] using cpu capabilities".to_string(), "Error while decoding stream #0:0: Invalid data found when processing input".to_string(), "Conversion failed!".to_string()];
         let s = summarize_stderr(&tail);
         assert!(s.contains("Invalid data found"), "got: {s}");
         assert!(!s.contains("Conversion failed"), "got: {s}");

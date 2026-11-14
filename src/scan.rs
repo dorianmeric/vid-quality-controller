@@ -37,21 +37,14 @@ pub fn start(cfg: Config, tx: Sender<Ev>) -> thread::JoinHandle<()> {
                     let next = queue.lock().ok().and_then(|mut q| q.pop_front());
                     let Some(path) = next else { break };
                     let n = done.fetch_add(1, Ordering::Relaxed) + 1;
-                    let _ = tx.send(Ev::ScanProgress {
-                        done: n,
-                        total,
-                        current: short_name(&path),
-                    });
+                    let _ = tx.send(Ev::ScanProgress { done: n, total, current: short_name(&path) });
                     match probe::probe(&ffprobe, &path) {
                         Ok(info) => {
                             let _ = tx.send(Ev::ScanFile(Box::new(info)));
                         }
                         Err(e) => {
                             errors.fetch_add(1, Ordering::Relaxed);
-                            let _ = tx.send(Ev::ScanError {
-                                path,
-                                msg: e.to_string(),
-                            });
+                            let _ = tx.send(Ev::ScanError { path, msg: e.to_string() });
                         }
                     }
                 }
@@ -61,11 +54,7 @@ pub fn start(cfg: Config, tx: Sender<Ev>) -> thread::JoinHandle<()> {
             let _ = h.join();
         }
 
-        let _ = tx.send(Ev::ScanDone {
-            scanned: done.load(Ordering::Relaxed),
-            errors: errors.load(Ordering::Relaxed),
-            elapsed_secs: started.elapsed().as_secs_f64(),
-        });
+        let _ = tx.send(Ev::ScanDone { scanned: done.load(Ordering::Relaxed), errors: errors.load(Ordering::Relaxed), elapsed_secs: started.elapsed().as_secs_f64() });
     })
 }
 
@@ -74,11 +63,7 @@ fn collect_files(cfg: &Config) -> Vec<PathBuf> {
     if !cfg.root.is_dir() {
         return out;
     }
-    for entry in WalkDir::new(&cfg.root)
-        .follow_links(false)
-        .into_iter()
-        .filter_map(|e| e.ok())
-    {
+    for entry in WalkDir::new(&cfg.root).follow_links(false).into_iter().filter_map(|e| e.ok()) {
         if !entry.file_type().is_file() {
             continue;
         }
@@ -104,18 +89,7 @@ fn is_ours(path: &std::path::Path) -> bool {
 }
 
 fn short_name(path: &std::path::Path) -> String {
-    let name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_default();
-    let parent = path
-        .parent()
-        .and_then(|p| p.file_name())
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_default();
-    if parent.is_empty() {
-        name
-    } else {
-        format!("{parent}/{name}")
-    }
+    let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    let parent = path.parent().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    if parent.is_empty() { name } else { format!("{parent}/{name}") }
 }

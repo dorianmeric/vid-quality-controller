@@ -14,18 +14,12 @@ pub struct LocalTime {
 impl LocalTime {
     /// `2026-10-12 01:05:03`
     pub fn datetime(&self) -> String {
-        format!(
-            "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
-            self.year, self.month, self.day, self.hour, self.minute, self.second
-        )
+        format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02}", self.year, self.month, self.day, self.hour, self.minute, self.second)
     }
 
     /// `2026-10-12-010530` — used for log file names.
     pub fn stamp(&self) -> String {
-        format!(
-            "{:04}-{:02}-{:02}-{:02}{:02}{:02}",
-            self.year, self.month, self.day, self.hour, self.minute, self.second
-        )
+        format!("{:04}-{:02}-{:02}-{:02}{:02}{:02}", self.year, self.month, self.day, self.hour, self.minute, self.second)
     }
 
     /// `01:05:03` — used as a log line prefix.
@@ -54,29 +48,13 @@ pub fn local_now() -> LocalTime {
         fn GetLocalTime(out: *mut SystemTime);
     }
 
-    let mut st = SystemTime {
-        year: 0,
-        month: 0,
-        day_of_week: 0,
-        day: 0,
-        hour: 0,
-        minute: 0,
-        second: 0,
-        milliseconds: 0,
-    };
+    let mut st = SystemTime { year: 0, month: 0, day_of_week: 0, day: 0, hour: 0, minute: 0, second: 0, milliseconds: 0 };
     // SAFETY: GetLocalTime only writes into the struct we pass by pointer.
     unsafe { GetLocalTime(&mut st) };
     if st.year == 0 {
         return utc_now();
     }
-    LocalTime {
-        year: st.year as i32,
-        month: st.month as u32,
-        day: st.day as u32,
-        hour: st.hour as u32,
-        minute: st.minute as u32,
-        second: st.second as u32,
-    }
+    LocalTime { year: st.year as i32, month: st.month as u32, day: st.day as u32, hour: st.hour as u32, minute: st.minute as u32, second: st.second as u32 }
 }
 
 #[cfg(not(windows))]
@@ -85,21 +63,11 @@ pub fn local_now() -> LocalTime {
 }
 
 fn utc_now() -> LocalTime {
-    let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     let days = (secs / 86_400) as i64;
     let rem = secs % 86_400;
     let (year, month, day) = civil_from_days(days);
-    LocalTime {
-        year: year as i32,
-        month,
-        day,
-        hour: (rem / 3600) as u32,
-        minute: ((rem % 3600) / 60) as u32,
-        second: (rem % 60) as u32,
-    }
+    LocalTime { year: year as i32, month, day, hour: (rem / 3600) as u32, minute: ((rem % 3600) / 60) as u32, second: (rem % 60) as u32 }
 }
 
 /// Howard Hinnant's days-from-civil inverse.
@@ -138,11 +106,7 @@ pub fn bytes_short(n: u64) -> String {
     const MIB: f64 = 1024.0 * 1024.0;
     const GIB: f64 = MIB * 1024.0;
     let f = n as f64;
-    if f >= GIB {
-        format!("{:.2}G", f / GIB)
-    } else {
-        format!("{:.0}M", f / MIB)
-    }
+    if f >= GIB { format!("{:.2}G", f / GIB) } else { format!("{:.0}M", f / MIB) }
 }
 
 /// `h:mm:ss` (or `m:ss` for short clips).
@@ -152,11 +116,7 @@ pub fn duration(secs: f64) -> String {
     }
     let total = secs.round() as u64;
     let (h, m, s) = (total / 3600, (total % 3600) / 60, total % 60);
-    if h > 0 {
-        format!("{h}:{m:02}:{s:02}")
-    } else {
-        format!("{m}:{s:02}")
-    }
+    if h > 0 { format!("{h}:{m:02}:{s:02}") } else { format!("{m}:{s:02}") }
 }
 
 /// Compact duration with only the non-zero units, e.g. `11d 23h 12m 10s`,
@@ -166,12 +126,7 @@ pub fn duration_long(secs: f64) -> String {
         return "—".into();
     }
     let total = secs.round() as u64;
-    let (d, h, m, s) = (
-        total / 86_400,
-        (total % 86_400) / 3600,
-        (total % 3600) / 60,
-        total % 60,
-    );
+    let (d, h, m, s) = (total / 86_400, (total % 86_400) / 3600, (total % 3600) / 60, total % 60);
     let mut parts: Vec<String> = Vec::new();
     for (value, name) in [(d, "d"), (h, "h"), (m, "m"), (s, "s")] {
         if value > 0 {
@@ -187,29 +142,17 @@ pub fn duration_long(secs: f64) -> String {
 /// Compact bitrate: `3.42 Mbps` / `812 kbps`.
 pub fn bitrate(bps: u64) -> String {
     let k = bps as f64 / 1000.0;
-    if k >= 1000.0 {
-        format!("{:.2} Mbps", k / 1000.0)
-    } else {
-        format!("{k:.0} kbps")
-    }
+    if k >= 1000.0 { format!("{:.2} Mbps", k / 1000.0) } else { format!("{k:.0} kbps") }
 }
 
 /// Compact bitrate for tight table cells: `3.4M` / `812k`.
 pub fn bits_short(bps: u64) -> String {
     let k = bps as f64 / 1000.0;
-    if k >= 1000.0 {
-        format!("{:.1}M", k / 1000.0)
-    } else {
-        format!("{k:.0}k")
-    }
+    if k >= 1000.0 { format!("{:.1}M", k / 1000.0) } else { format!("{k:.0}k") }
 }
 
 pub fn resolution(w: u32, h: u32) -> String {
-    if w == 0 || h == 0 {
-        "?".into()
-    } else {
-        format!("{w}x{h}")
-    }
+    if w == 0 || h == 0 { "?".into() } else { format!("{w}x{h}") }
 }
 
 pub fn fps(v: f64) -> String {
@@ -237,10 +180,7 @@ mod tests {
         assert_eq!(duration_long(3600.0), "1h");
         assert_eq!(duration_long(3660.0), "1h 1m");
         assert_eq!(duration_long(86_400.0), "1d");
-        assert_eq!(
-            duration_long(1_033_930.0),
-            "11d 23h 12m 10s"
-        );
+        assert_eq!(duration_long(1_033_930.0), "11d 23h 12m 10s");
         assert_eq!(duration_long(-5.0), "—");
         assert_eq!(duration_long(f64::NAN), "—");
     }

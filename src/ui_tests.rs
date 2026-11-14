@@ -3,9 +3,7 @@
 
 #![cfg(test)]
 
-use crate::app::{
-    App, EncodeState, Phase, RowItem, RowStatus, Slot, SortMode, is_candidate,
-};
+use crate::app::{App, EncodeState, Phase, RowItem, RowStatus, Slot, SortMode, is_candidate};
 use crate::config::Config;
 use crate::encode::{JobResult, Outcome};
 use crate::probe::MediaInfo;
@@ -38,30 +36,10 @@ fn test_app() -> App {
     let (tx, _rx) = unbounded();
     let mut app = App::new(Config::default(), PathBuf::from("config.json"), None, tx);
     app.rows = vec![
-        RowItem {
-            info: media("a.mp4", 900.0, 6.5, "h264", 1200.0),
-            candidate: true,
-            selected: true,
-            status: RowStatus::Pending,
-        },
-        RowItem {
-            info: media("b.mp4", 40.0, 2.4, "hevc", 130.0),
-            candidate: true,
-            selected: true,
-            status: RowStatus::Done(Outcome::Replaced),
-        },
-        RowItem {
-            info: media("c.mp4", 12.0, 0.8, "h264", 120.0),
-            candidate: false,
-            selected: false,
-            status: RowStatus::Pending,
-        },
-        RowItem {
-            info: media("d.mkv", 300.0, 3.0, "av1", 600.0),
-            candidate: false,
-            selected: false,
-            status: RowStatus::Pending,
-        },
+        RowItem { info: media("a.mp4", 900.0, 6.5, "h264", 1200.0), candidate: true, selected: true, status: RowStatus::Pending },
+        RowItem { info: media("b.mp4", 40.0, 2.4, "hevc", 130.0), candidate: true, selected: true, status: RowStatus::Done(Outcome::Replaced) },
+        RowItem { info: media("c.mp4", 12.0, 0.8, "h264", 120.0), candidate: false, selected: false, status: RowStatus::Pending },
+        RowItem { info: media("d.mkv", 300.0, 3.0, "av1", 600.0), candidate: false, selected: false, status: RowStatus::Pending },
     ];
     app.refresh_visible();
     app.table_state.select(Some(0));
@@ -140,26 +118,8 @@ fn encoding_screen_renders() {
         completed: 1,
         started: Instant::now(),
         slots: vec![
-            Slot {
-                id: Some(7),
-                name: "b.mp4".into(),
-                frac: 0.42,
-                speed: 3.5,
-                out_bytes: 10 * 1024 * 1024,
-                dur: 130.0,
-                src_bytes: 40 * 1024 * 1024,
-                started: Some(Instant::now()),
-            },
-            Slot {
-                id: None,
-                name: String::new(),
-                frac: 0.0,
-                speed: 0.0,
-                out_bytes: 0,
-                dur: 0.0,
-                src_bytes: 0,
-                started: None,
-            },
+            Slot { id: Some(7), name: "b.mp4".into(), frac: 0.42, speed: 3.5, out_bytes: 10 * 1024 * 1024, dur: 130.0, src_bytes: 40 * 1024 * 1024, started: Some(Instant::now()) },
+            Slot { id: None, name: String::new(), frac: 0.0, speed: 0.0, out_bytes: 0, dur: 0.0, src_bytes: 0, started: None },
         ],
         results: vec![JobResult {
             path: PathBuf::from("E:\\Po\\folder\\a.mp4"),
@@ -195,16 +155,7 @@ fn failed_job_shows_its_error_in_the_row() {
         total: 2,
         completed: 2,
         started: Instant::now(),
-        slots: vec![Slot {
-            id: None,
-            name: String::new(),
-            frac: 0.0,
-            speed: 0.0,
-            out_bytes: 0,
-            dur: 0.0,
-            src_bytes: 0,
-            started: None,
-        }],
+        slots: vec![Slot { id: None, name: String::new(), frac: 0.0, speed: 0.0, out_bytes: 0, dur: 0.0, src_bytes: 0, started: None }],
         results: vec![JobResult {
             path: PathBuf::from("E:\\Po\\folder\\broken.mp4"),
             final_path: PathBuf::from("E:\\Po\\folder\\broken.mp4"),
@@ -227,19 +178,13 @@ fn failed_job_shows_its_error_in_the_row() {
     });
     let text = render(&mut app);
     assert!(text.contains("[failed"), "tag missing:\n{text}");
-    assert!(
-        text.contains("Error while decoding"),
-        "failure reason must be visible in the row:\n{text}"
-    );
+    assert!(text.contains("Error while decoding"), "failure reason must be visible in the row:\n{text}");
 
     // Same reason must survive on the summary screen, at the end of the row.
     app.phase = Phase::Summary;
     let text = render(&mut app);
     assert!(text.contains("broken.mp4"), "row missing:\n{text}");
-    assert!(
-        text.contains("Error while decoding"),
-        "summary must show the failure reason:\n{text}"
-    );
+    assert!(text.contains("Error while decoding"), "summary must show the failure reason:\n{text}");
 }
 
 #[test]
@@ -250,16 +195,7 @@ fn summary_screen_renders() {
         total: 1,
         completed: 1,
         started: Instant::now(),
-        slots: vec![Slot {
-            id: None,
-            name: String::new(),
-            frac: 0.0,
-            speed: 0.0,
-            out_bytes: 0,
-            dur: 0.0,
-            src_bytes: 0,
-            started: None,
-        }],
+        slots: vec![Slot { id: None, name: String::new(), frac: 0.0, speed: 0.0, out_bytes: 0, dur: 0.0, src_bytes: 0, started: None }],
         results: vec![JobResult {
             path: PathBuf::from("E:\\Po\\folder\\a.mp4"),
             final_path: PathBuf::from("E:\\Po\\folder\\a.mp4"),
@@ -335,21 +271,9 @@ fn candidate_rules() {
 #[test]
 fn slot_eta_uses_time_spent_on_that_file() {
     use std::time::Duration;
-    let mut slot = Slot {
-        id: Some(1),
-        name: "a.mp4".into(),
-        frac: 0.5,
-        speed: 4.0,
-        out_bytes: 0,
-        dur: 60.0,
-        src_bytes: 0,
-        started: Some(Instant::now() - Duration::from_secs(30)),
-    };
+    let mut slot = Slot { id: Some(1), name: "a.mp4".into(), frac: 0.5, speed: 4.0, out_bytes: 0, dur: 60.0, src_bytes: 0, started: Some(Instant::now() - Duration::from_secs(30)) };
     let eta = slot.eta_secs().expect("half way there means an ETA");
-    assert!(
-        (25.0..=35.0).contains(&eta),
-        "half done after 30s should leave ~30s, got {eta}"
-    );
+    assert!((25.0..=35.0).contains(&eta), "half done after 30s should leave ~30s, got {eta}");
 
     // Too early to trust: no estimate under 2%.
     slot.frac = 0.01;
@@ -373,50 +297,22 @@ fn encode_order_follows_the_table_order() {
     let mut app = App::new(Config::default(), PathBuf::from("c.json"), None, tx);
     // Names sort opposite to sizes, so the two sort modes give different orders.
     app.rows = vec![
-        RowItem {
-            info: media("z_big.mp4", 900.0, 6.0, "h264", 600.0),
-            candidate: true,
-            selected: true,
-            status: RowStatus::Pending,
-        },
-        RowItem {
-            info: media("m_mid.mp4", 400.0, 5.0, "h264", 600.0),
-            candidate: true,
-            selected: true,
-            status: RowStatus::Pending,
-        },
-        RowItem {
-            info: media("a_small.mp4", 40.0, 4.0, "h264", 600.0),
-            candidate: true,
-            selected: true,
-            status: RowStatus::Pending,
-        },
-        RowItem {
-            info: media("skip_me.mp4", 500.0, 9.0, "h264", 600.0),
-            candidate: true,
-            selected: false,
-            status: RowStatus::Pending,
-        },
+        RowItem { info: media("z_big.mp4", 900.0, 6.0, "h264", 600.0), candidate: true, selected: true, status: RowStatus::Pending },
+        RowItem { info: media("m_mid.mp4", 400.0, 5.0, "h264", 600.0), candidate: true, selected: true, status: RowStatus::Pending },
+        RowItem { info: media("a_small.mp4", 40.0, 4.0, "h264", 600.0), candidate: true, selected: true, status: RowStatus::Pending },
+        RowItem { info: media("skip_me.mp4", 500.0, 9.0, "h264", 600.0), candidate: true, selected: false, status: RowStatus::Pending },
     ];
 
     // Default sort (size, biggest first) is what the table shows.
     app.sort = SortMode::Size;
     app.refresh_visible();
-    let order: Vec<String> = app
-        .selected_jobs()
-        .iter()
-        .map(|m| m.name())
-        .collect();
+    let order: Vec<String> = app.selected_jobs().iter().map(|m| m.name()).collect();
     assert_eq!(order, ["z_big.mp4", "m_mid.mp4", "a_small.mp4"]);
 
     // Re-sorting by name must re-order the queue the same way.
     app.sort = SortMode::Name;
     app.refresh_visible();
-    let order: Vec<String> = app
-        .selected_jobs()
-        .iter()
-        .map(|m| m.name())
-        .collect();
+    let order: Vec<String> = app.selected_jobs().iter().map(|m| m.name()).collect();
     assert_eq!(order, ["a_small.mp4", "m_mid.mp4", "z_big.mp4"]);
 
     // The deselected file never enters the queue, and only candidates do.
@@ -426,4 +322,3 @@ fn encode_order_follows_the_table_order() {
     app.refresh_visible();
     assert_eq!(app.selected_jobs().len(), 3, "filter must not change the queue");
 }
-

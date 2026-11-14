@@ -21,13 +21,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         Phase::Encoding => (5 + app.cfg.parallelism.max(1) as u16).min(14),
         _ => 6,
     };
-    let chunks = Layout::vertical([
-        Constraint::Length(5),
-        Constraint::Min(4),
-        Constraint::Length(panel_h),
-        Constraint::Length(1),
-    ])
-    .split(f.area());
+    let chunks = Layout::vertical([Constraint::Length(5), Constraint::Min(4), Constraint::Length(panel_h), Constraint::Length(1)]).split(f.area());
 
     draw_header(f, chunks[0], app);
     match app.phase {
@@ -53,10 +47,7 @@ fn draw_header(f: &mut Frame, area: Rect, app: &App) {
     let block = Block::bordered()
         .title(Line::from(vec![
             Span::styled(" ▤ ", Style::new().fg(ACCENT).add_modifier(Modifier::BOLD)),
-            Span::styled(
-                "Video Quality Controller",
-                Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
-            ),
+            Span::styled("Video Quality Controller", Style::new().fg(ACCENT).add_modifier(Modifier::BOLD)),
             Span::raw(" "),
         ]))
         .border_style(Style::new().fg(Color::Rgb(70, 75, 95)));
@@ -70,51 +61,26 @@ fn draw_header(f: &mut Frame, area: Rect, app: &App) {
         Phase::Summary => Span::styled(" SUMMARY ", Style::new().fg(Color::Black).bg(GOOD)),
     };
 
-    let mut line1 = vec![
-        Span::styled("root ", Style::new().fg(DIM)),
-        Span::styled(app.cfg.root.display().to_string(), Style::new().fg(Color::White)),
-        Span::raw("  "),
-        phase_badge,
-    ];
+    let mut line1 = vec![Span::styled("root ", Style::new().fg(DIM)), Span::styled(app.cfg.root.display().to_string(), Style::new().fg(Color::White)), Span::raw("  "), phase_badge];
     if app.cfg.dry_run {
         line1.push(Span::raw(" "));
-        line1.push(Span::styled(
-            " DRY RUN ",
-            Style::new().fg(Color::Black).bg(WARN).add_modifier(Modifier::BOLD),
-        ));
+        line1.push(Span::styled(" DRY RUN ", Style::new().fg(Color::Black).bg(WARN).add_modifier(Modifier::BOLD)));
     }
 
-    let line2 = Line::from(vec![
-        Span::styled("preset ", Style::new().fg(DIM)),
-        Span::styled(app.cfg.preset_summary(), Style::new().fg(Color::Rgb(190, 190, 200))),
-    ]);
+    let line2 = Line::from(vec![Span::styled("preset ", Style::new().fg(DIM)), Span::styled(app.cfg.preset_summary(), Style::new().fg(Color::Rgb(190, 190, 200)))]);
 
     let line3 = if let Some(msg) = app.toast_text() {
-        Line::from(vec![
-            Span::styled("» ", Style::new().fg(ACCENT)),
-            Span::styled(msg.to_string(), Style::new().fg(ACCENT)),
-        ])
+        Line::from(vec![Span::styled("» ", Style::new().fg(ACCENT)), Span::styled(msg.to_string(), Style::new().fg(ACCENT))])
     } else if app.phase == Phase::Scanning {
         let spinner = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
         let s = spinner[(app.tick / 2) as usize % spinner.len()];
-        Line::from(vec![
-            Span::styled(format!("{s} "), Style::new().fg(WARN)),
-            Span::styled("scanning folder…", Style::new().fg(DIM)),
-        ])
+        Line::from(vec![Span::styled(format!("{s} "), Style::new().fg(WARN)), Span::styled("scanning folder…", Style::new().fg(DIM))])
     } else {
         let cands = app.candidate_count();
         let bytes = app.candidate_bytes();
         Line::from(vec![
             Span::styled("» ", Style::new().fg(DIM)),
-            Span::styled(
-                format!(
-                    "{} files scanned · {cands} candidates over {} kbps · {} total",
-                    app.rows.len(),
-                    app.cfg.bitrate_threshold_kbps,
-                    fmt::bytes(bytes)
-                ),
-                Style::new().fg(DIM),
-            ),
+            Span::styled(format!("{} files scanned · {cands} candidates over {} kbps · {} total", app.rows.len(), app.cfg.bitrate_threshold_kbps, fmt::bytes(bytes)), Style::new().fg(DIM)),
         ])
     };
 
@@ -125,64 +91,32 @@ fn draw_header(f: &mut Frame, area: Rect, app: &App) {
 // ---------------------------------------------------------------- bodies
 
 fn draw_scan_body(f: &mut Frame, area: Rect, app: &App) {
-    let block = Block::bordered()
-        .title(" Scanning ")
-        .border_style(Style::new().fg(Color::Rgb(70, 75, 95)));
+    let block = Block::bordered().title(" Scanning ").border_style(Style::new().fg(Color::Rgb(70, 75, 95)));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    let rows = Layout::vertical([
-        Constraint::Length(1),
-        Constraint::Length(3),
-        Constraint::Length(1),
-        Constraint::Length(1),
-        Constraint::Min(0),
-    ])
-    .split(inner);
+    let rows = Layout::vertical([Constraint::Length(1), Constraint::Length(3), Constraint::Length(1), Constraint::Length(1), Constraint::Min(0)]).split(inner);
 
-    let ratio = if app.scan_total == 0 {
-        0.0
-    } else {
-        (app.scan_done as f64 / app.scan_total as f64).clamp(0.0, 1.0)
-    };
+    let ratio = if app.scan_total == 0 { 0.0 } else { (app.scan_done as f64 / app.scan_total as f64).clamp(0.0, 1.0) };
     f.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled("probing headers with ffprobe ", Style::new().fg(DIM)),
-            Span::styled(
-                format!("{} / {}", app.scan_done, app.scan_total),
-                Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
-            ),
+            Span::styled(format!("{} / {}", app.scan_done, app.scan_total), Style::new().fg(ACCENT).add_modifier(Modifier::BOLD)),
         ])),
         rows[0],
     );
-    f.render_widget(
-        Gauge::default()
-            .gauge_style(Style::new().fg(ACCENT).bg(Color::Rgb(35, 40, 55)))
-            .ratio(ratio)
-            .label(format!("{:.0}%", ratio * 100.0)),
-        rows[1],
-    );
+    f.render_widget(Gauge::default().gauge_style(Style::new().fg(ACCENT).bg(Color::Rgb(35, 40, 55))).ratio(ratio).label(format!("{:.0}%", ratio * 100.0)), rows[1]);
     f.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled("current: ", Style::new().fg(DIM)),
-            Span::styled(
-                truncate(&app.scan_current, area.width.saturating_sub(20) as usize),
-                Style::new().fg(Color::Rgb(190, 190, 200)),
-            ),
+            Span::styled(truncate(&app.scan_current, area.width.saturating_sub(20) as usize), Style::new().fg(Color::Rgb(190, 190, 200))),
         ])),
         rows[2],
     );
     f.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled("found: ", Style::new().fg(DIM)),
-            Span::styled(
-                format!(
-                    "{} files, {} candidates",
-                    app.rows.len(),
-                    app.candidate_count()
-                ),
-                Style::new().fg(GOOD),
-            ),
+            Span::styled(format!("{} files, {} candidates", app.rows.len(), app.candidate_count()), Style::new().fg(GOOD)),
             Span::raw("   "),
             Span::styled("unreadable: ", Style::new().fg(DIM)),
             Span::styled(app.scan_errors.len().to_string(), Style::new().fg(BAD)),
@@ -195,27 +129,15 @@ fn draw_scan_body(f: &mut Frame, area: Rect, app: &App) {
             .scan_errors
             .iter()
             .take(rows[4].height as usize)
-            .map(|e| {
-                Line::from(Span::styled(
-                    truncate(e, inner.width.saturating_sub(2) as usize),
-                    Style::new().fg(Color::Rgb(150, 110, 110)),
-                ))
-            })
+            .map(|e| Line::from(Span::styled(truncate(e, inner.width.saturating_sub(2) as usize), Style::new().fg(Color::Rgb(150, 110, 110)))))
             .collect();
         f.render_widget(Paragraph::new(lines), rows[4]);
     }
 }
 
 fn draw_review_body(f: &mut Frame, area: Rect, app: &mut App) {
-    let title = format!(
-        " Candidates {} · selected {} / {} ",
-        app.visible.len(),
-        app.selected_count(),
-        fmt::bytes(app.selected_bytes())
-    );
-    let block = Block::bordered()
-        .title(title)
-        .border_style(Style::new().fg(Color::Rgb(70, 75, 95)));
+    let title = format!(" Candidates {} · selected {} / {} ", app.visible.len(), app.selected_count(), fmt::bytes(app.selected_bytes()));
+    let block = Block::bordered().title(title).border_style(Style::new().fg(Color::Rgb(70, 75, 95)));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -230,10 +152,7 @@ fn draw_review_body(f: &mut Frame, area: Rect, app: &mut App) {
         Constraint::Length(9),
         Constraint::Length(30),
     ];
-    let header = Row::new(vec![
-        "file", "resolution", "fps", "codec", "bitrate", "size", "length", "quality", "folder",
-    ])
-    .style(Style::new().fg(DIM).add_modifier(Modifier::BOLD));
+    let header = Row::new(vec!["file", "resolution", "fps", "codec", "bitrate", "size", "length", "quality", "folder"]).style(Style::new().fg(DIM).add_modifier(Modifier::BOLD));
 
     let rows: Vec<Row> = app
         .visible
@@ -245,10 +164,7 @@ fn draw_review_body(f: &mut Frame, area: Rect, app: &mut App) {
             let flag = if r.status == RowStatus::Running {
                 Span::styled("⟳", Style::new().fg(WARN))
             } else if let RowStatus::Done(o) = r.status {
-                Span::styled(
-                    if o.is_success() { "✔" } else { "✖" },
-                    Style::new().fg(if o.is_success() { GOOD } else { BAD }),
-                )
+                Span::styled(if o.is_success() { "✔" } else { "✖" }, Style::new().fg(if o.is_success() { GOOD } else { BAD }))
             } else if r.selected {
                 Span::styled("✔", Style::new().fg(GOOD))
             } else {
@@ -267,18 +183,10 @@ fn draw_review_body(f: &mut Frame, area: Rect, app: &mut App) {
                 Span::styled(format!("{over:.1}x over"), Style::new().fg(DIM))
             };
 
-            let style = if r.candidate {
-                Style::new().fg(Color::Rgb(205, 205, 215))
-            } else {
-                Style::new().fg(Color::Rgb(105, 105, 115))
-            };
+            let style = if r.candidate { Style::new().fg(Color::Rgb(205, 205, 215)) } else { Style::new().fg(Color::Rgb(105, 105, 115)) };
 
             Row::new(vec![
-                Cell::from(Line::from(vec![
-                    flag,
-                    Span::raw(" "),
-                    Span::styled(truncate(&info.name(), 50), style),
-                ])),
+                Cell::from(Line::from(vec![flag, Span::raw(" "), Span::styled(truncate(&info.name(), 50), style)])),
                 Cell::from(fmt::resolution(info.width, info.height)),
                 Cell::from(fmt::fps(info.fps)),
                 Cell::from(info.vcodec.clone()),
@@ -286,33 +194,19 @@ fn draw_review_body(f: &mut Frame, area: Rect, app: &mut App) {
                 Cell::from(fmt::bytes_short(info.size_bytes)),
                 Cell::from(fmt::duration(info.duration_secs)),
                 Cell::from(quality),
-                Cell::from(Span::styled(
-                    truncate(&info.folder(), 150),
-                    Style::new().fg(Color::Rgb(110, 110, 120)),
-                )),
+                Cell::from(Span::styled(truncate(&info.folder(), 150), Style::new().fg(Color::Rgb(110, 110, 120)))),
             ])
             .style(style)
         })
         .collect();
 
-    let table = Table::new(rows, widths)
-        .header(header)
-        .column_spacing(1)
-        .row_highlight_style(
-            Style::new()
-                .bg(SEL_BG)
-                .add_modifier(Modifier::BOLD)
-                .fg(Color::White),
-        )
-        .highlight_symbol("▸ ");
+    let table = Table::new(rows, widths).header(header).column_spacing(1).row_highlight_style(Style::new().bg(SEL_BG).add_modifier(Modifier::BOLD).fg(Color::White)).highlight_symbol("▸ ");
 
     f.render_stateful_widget(table, inner, &mut app.table_state);
 }
 
 fn draw_encode_body(f: &mut Frame, area: Rect, app: &App) {
-    let block = Block::bordered()
-        .title(" In progress ")
-        .border_style(Style::new().fg(Color::Rgb(70, 75, 95)));
+    let block = Block::bordered().title(" In progress ").border_style(Style::new().fg(Color::Rgb(70, 75, 95)));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -331,13 +225,7 @@ fn draw_encode_body(f: &mut Frame, area: Rect, app: &App) {
             Outcome::Cancelled => ("cancel  ", WARN),
         };
         let saved = if r.outcome.is_success() {
-            format!(
-                "{} → {}  -{} ({:.0}%)",
-                fmt::bytes(r.old_size),
-                fmt::bytes(r.new_size),
-                fmt::bytes(r.saved_bytes().max(0) as u64),
-                r.saved_pct()
-            )
+            format!("{} → {}  -{} ({:.0}%)", fmt::bytes(r.old_size), fmt::bytes(r.new_size), fmt::bytes(r.saved_bytes().max(0) as u64), r.saved_pct())
         } else {
             format!("kept {}", fmt::bytes(r.old_size))
         };
@@ -347,36 +235,24 @@ fn draw_encode_body(f: &mut Frame, area: Rect, app: &App) {
         } else {
             let used = 9 + 38 + 2 + saved.chars().count();
             let room = (inner.width as usize).saturating_sub(used + 4);
-            if room < 8 {
-                String::new()
-            } else {
-                format!("  ·  {}", truncate(&r.note, room))
-            }
+            if room < 8 { String::new() } else { format!("  ·  {}", truncate(&r.note, room)) }
         };
         lines.push(Line::from(vec![
             Span::styled(format!("[{tag}] "), Style::new().fg(color)),
-            Span::styled(
-                truncate(&file_name(&r.path), 38),
-                Style::new().fg(Color::Rgb(200, 200, 210)),
-            ),
+            Span::styled(truncate(&file_name(&r.path), 38), Style::new().fg(Color::Rgb(200, 200, 210))),
             Span::raw("  "),
             Span::styled(saved, Style::new().fg(DIM)),
             Span::styled(reason, Style::new().fg(color)),
         ]));
     }
     if lines.is_empty() {
-        lines.push(Line::from(Span::styled(
-            "waiting for the first result…",
-            Style::new().fg(DIM),
-        )));
+        lines.push(Line::from(Span::styled("waiting for the first result…", Style::new().fg(DIM))));
     }
     f.render_widget(Paragraph::new(lines), inner);
 }
 
 fn draw_summary_body(f: &mut Frame, area: Rect, app: &mut App) {
-    let block = Block::bordered()
-        .title(" Before / after ")
-        .border_style(Style::new().fg(Color::Rgb(70, 75, 95)));
+    let block = Block::bordered().title(" Before / after ").border_style(Style::new().fg(Color::Rgb(70, 75, 95)));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -391,16 +267,9 @@ fn draw_summary_body(f: &mut Frame, area: Rect, app: &mut App) {
         Constraint::Length(9),
         Constraint::Min(10),
     ];
-    let header = Row::new(vec![
-        "file", "before", "after", "saved", "saved%", "bitrate", "length Δ", "time", "status",
-    ])
-    .style(Style::new().fg(DIM).add_modifier(Modifier::BOLD));
+    let header = Row::new(vec!["file", "before", "after", "saved", "saved%", "bitrate", "length Δ", "time", "status"]).style(Style::new().fg(DIM).add_modifier(Modifier::BOLD));
 
-    let results: Vec<crate::encode::JobResult> = app
-        .enc
-        .as_ref()
-        .map(|e| e.results.clone())
-        .unwrap_or_default();
+    let results: Vec<crate::encode::JobResult> = app.enc.as_ref().map(|e| e.results.clone()).unwrap_or_default();
 
     let rows: Vec<Row> = results
         .iter()
@@ -412,61 +281,31 @@ fn draw_summary_body(f: &mut Frame, area: Rect, app: &mut App) {
                 Outcome::Failed => (BAD, "failed"),
                 Outcome::Cancelled => (WARN, "cancelled"),
             };
-            let new = if r.new_size > 0 {
-                fmt::bytes_short(r.new_size)
-            } else {
-                "—".into()
-            };
-            let saved = if r.new_size > 0 {
-                format!("-{}", fmt::bytes_short(r.saved_bytes().max(0) as u64))
-            } else {
-                "—".into()
-            };
-            let pct = if r.new_size > 0 {
-                format!("{:.0}%", r.saved_pct())
-            } else {
-                "—".into()
-            };
-            let delta = if r.new_duration > 0.0 {
-                format!("{:+.2}s", r.new_duration - r.old_duration)
-            } else {
-                "—".into()
-            };
+            let new = if r.new_size > 0 { fmt::bytes_short(r.new_size) } else { "—".into() };
+            let saved = if r.new_size > 0 { format!("-{}", fmt::bytes_short(r.saved_bytes().max(0) as u64)) } else { "—".into() };
+            let pct = if r.new_size > 0 { format!("{:.0}%", r.saved_pct()) } else { "—".into() };
+            let delta = if r.new_duration > 0.0 { format!("{:+.2}s", r.new_duration - r.old_duration) } else { "—".into() };
             Row::new(vec![
                 Cell::from(truncate(&r.path.display().to_string(), 35)),
                 Cell::from(fmt::bytes_short(r.old_size)),
                 Cell::from(new),
                 Cell::from(Span::styled(saved, Style::new().fg(color))),
                 Cell::from(Span::styled(pct, Style::new().fg(color))),
-                Cell::from(format!(
-                    "{}→{}",
-                    fmt::bits_short(r.old_bitrate_bps),
-                    fmt::bits_short(r.new_bitrate_bps)
-                )),
+                Cell::from(format!("{}→{}", fmt::bits_short(r.old_bitrate_bps), fmt::bits_short(r.new_bitrate_bps))),
                 Cell::from(delta),
                 Cell::from(format!("{:.0}s", r.total_secs)),
                 // The status column is the flexible one, so the reason for a
                 // failure/rejection fits at the end of the row.
                 Cell::from(Line::from(vec![
                     Span::styled(label, Style::new().fg(color)),
-                    Span::styled(
-                        if r.note.is_empty() {
-                            String::new()
-                        } else {
-                            format!(" · {}", r.note)
-                        },
-                        Style::new().fg(if r.outcome.is_success() { DIM } else { color }),
-                    ),
+                    Span::styled(if r.note.is_empty() { String::new() } else { format!(" · {}", r.note) }, Style::new().fg(if r.outcome.is_success() { DIM } else { color })),
                 ])),
             ])
             .style(Style::new().fg(Color::Rgb(200, 200, 210)))
         })
         .collect();
 
-    let table = Table::new(rows, widths)
-        .header(header)
-        .column_spacing(1)
-        .row_highlight_style(Style::new().bg(SEL_BG));
+    let table = Table::new(rows, widths).header(header).column_spacing(1).row_highlight_style(Style::new().bg(SEL_BG));
     f.render_stateful_widget(table, inner, &mut app.table_state);
 }
 
@@ -481,71 +320,42 @@ fn draw_panel(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn draw_review_panel(f: &mut Frame, area: Rect, app: &App) {
-    let block = Block::bordered()
-        .title(" Plan ")
-        .border_style(Style::new().fg(Color::Rgb(70, 75, 95)));
+    let block = Block::bordered().title(" Plan ").border_style(Style::new().fg(Color::Rgb(70, 75, 95)));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
     let selected = app.selected_count();
     let bytes = app.selected_bytes();
     let avg_bps: u64 = {
-        let total_bps: u64 = app
-            .rows
-            .iter()
-            .filter(|r| r.candidate && r.selected)
-            .map(|r| r.info.bitrate_bps)
-            .sum();
-        if selected > 0 {
-            total_bps / selected as u64
-        } else {
-            0
-        }
+        let total_bps: u64 = app.rows.iter().filter(|r| r.candidate && r.selected).map(|r| r.info.bitrate_bps).sum();
+        if selected > 0 { total_bps / selected as u64 } else { 0 }
     };
 
     let lines = vec![
         Line::from(vec![
             Span::styled("queued ", Style::new().fg(DIM)),
-            Span::styled(
-                format!("{selected} files"),
-                Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
-            ),
+            Span::styled(format!("{selected} files"), Style::new().fg(ACCENT).add_modifier(Modifier::BOLD)),
             Span::styled(" · ", Style::new().fg(DIM)),
             Span::styled(fmt::bytes(bytes), Style::new().fg(ACCENT)),
-            Span::styled(
-                format!(" (avg {})", fmt::bitrate(avg_bps)),
-                Style::new().fg(DIM),
-            ),
+            Span::styled(format!(" (avg {})", fmt::bitrate(avg_bps)), Style::new().fg(DIM)),
         ]),
         Line::from(vec![
             Span::styled("encode ", Style::new().fg(DIM)),
             Span::styled(
-                format!(
-                    "libsvtav1 crf{} preset{} → AAC {}k {}ch",
-                    app.cfg.crf, app.cfg.preset, app.cfg.audio_bitrate_kbps, app.cfg.audio_channels
-                ),
+                format!("libsvtav1 crf{} preset{} → AAC {}k {}ch", app.cfg.crf, app.cfg.preset, app.cfg.audio_bitrate_kbps, app.cfg.audio_channels),
                 Style::new().fg(Color::Rgb(190, 190, 200)),
             ),
             Span::styled("  (resolution & framerate untouched)", Style::new().fg(DIM)),
         ]),
         Line::from(vec![
             Span::styled("workers ", Style::new().fg(DIM)),
-            Span::styled(
-                format!("{}", app.cfg.parallelism),
-                Style::new().fg(Color::Rgb(190, 190, 200)),
-            ),
+            Span::styled(format!("{}", app.cfg.parallelism), Style::new().fg(Color::Rgb(190, 190, 200))),
             Span::styled(" · sort ", Style::new().fg(DIM)),
             Span::styled(app.sort.label(), Style::new().fg(Color::Rgb(190, 190, 200))),
             Span::styled(" · view ", Style::new().fg(DIM)),
-            Span::styled(
-                if app.show_all { "all files" } else { "candidates" },
-                Style::new().fg(Color::Rgb(190, 190, 200)),
-            ),
+            Span::styled(if app.show_all { "all files" } else { "candidates" }, Style::new().fg(Color::Rgb(190, 190, 200))),
             Span::styled(" · dry-run ", Style::new().fg(DIM)),
-            Span::styled(
-                if app.cfg.dry_run { "on" } else { "off" },
-                Style::new().fg(if app.cfg.dry_run { WARN } else { DIM }),
-            ),
+            Span::styled(if app.cfg.dry_run { "on" } else { "off" }, Style::new().fg(if app.cfg.dry_run { WARN } else { DIM })),
         ]),
         detail_line(app),
     ];
@@ -554,22 +364,12 @@ fn draw_review_panel(f: &mut Frame, area: Rect, app: &App) {
 
 /// Source details for the row under the cursor.
 fn detail_line(app: &App) -> Line<'static> {
-    let row = app
-        .table_state
-        .selected()
-        .and_then(|sel| app.visible.get(sel))
-        .map(|&i| &app.rows[i]);
+    let row = app.table_state.selected().and_then(|sel| app.visible.get(sel)).map(|&i| &app.rows[i]);
     let Some(r) = row else {
-        return Line::from(Span::styled(
-            "select a file with ↑↓ to inspect it",
-            Style::new().fg(Color::Rgb(80, 80, 90)),
-        ));
+        return Line::from(Span::styled("select a file with ↑↓ to inspect it", Style::new().fg(Color::Rgb(80, 80, 90))));
     };
     let info = &r.info;
-    let vbr = info
-        .video_bitrate_bps
-        .map(fmt::bitrate)
-        .unwrap_or_else(|| "vbr ?".into());
+    let vbr = info.video_bitrate_bps.map(fmt::bitrate).unwrap_or_else(|| "vbr ?".into());
     Line::from(vec![
         Span::styled("source ", Style::new().fg(DIM)),
         Span::styled(
@@ -591,9 +391,7 @@ fn detail_line(app: &App) -> Line<'static> {
 }
 
 fn draw_encode_panel(f: &mut Frame, area: Rect, app: &App) {
-    let block = Block::bordered()
-        .title(" Progress ")
-        .border_style(Style::new().fg(Color::Rgb(70, 75, 95)));
+    let block = Block::bordered().title(" Progress ").border_style(Style::new().fg(Color::Rgb(70, 75, 95)));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -617,18 +415,7 @@ fn draw_encode_panel(f: &mut Frame, area: Rect, app: &App) {
             None => "ETA --:--".to_string(),
         }
     );
-    f.render_widget(
-        Gauge::default()
-            .gauge_style(
-                Style::new()
-                    .fg(GOOD)
-                    .bg(Color::Rgb(35, 40, 55))
-                    .add_modifier(Modifier::BOLD),
-            )
-            .ratio(overall)
-            .label(label),
-        rows[0],
-    );
+    f.render_widget(Gauge::default().gauge_style(Style::new().fg(GOOD).bg(Color::Rgb(35, 40, 55)).add_modifier(Modifier::BOLD)).ratio(overall).label(label), rows[0]);
 
     let status = if enc.cancelling {
         Span::styled("cancelling…", Style::new().fg(BAD))
@@ -640,17 +427,7 @@ fn draw_encode_panel(f: &mut Frame, area: Rect, app: &App) {
         Span::styled("running", Style::new().fg(GOOD))
     };
     f.render_widget(
-        Paragraph::new(Line::from(vec![
-            status,
-            Span::styled(
-                format!(
-                    "   elapsed {} · {} workers",
-                    fmt::duration(enc.started.elapsed().as_secs_f64()),
-                    enc.slots.len()
-                ),
-                Style::new().fg(DIM),
-            ),
-        ])),
+        Paragraph::new(Line::from(vec![status, Span::styled(format!("   elapsed {} · {} workers", fmt::duration(enc.started.elapsed().as_secs_f64()), enc.slots.len()), Style::new().fg(DIM))])),
         rows[1],
     );
 
@@ -661,14 +438,7 @@ fn draw_encode_panel(f: &mut Frame, area: Rect, app: &App) {
                 let pct = slot.frac * 100.0;
                 // Bytes written so far, as a share of the original file size.
                 // (Not the saving: 19% of source means 81% smaller.)
-                let output_share = if slot.out_bytes > 0 && slot.src_bytes > 0 {
-                    format!(
-                        "{:.0}%",
-                        slot.out_bytes as f64 * 100.0 / slot.src_bytes as f64
-                    )
-                } else {
-                    String::new()
-                };
+                let output_share = if slot.out_bytes > 0 && slot.src_bytes > 0 { format!("{:.0}%", slot.out_bytes as f64 * 100.0 / slot.src_bytes as f64) } else { String::new() };
                 let position = fmt::duration(slot.frac * slot.dur);
                 let length = fmt::duration(slot.dur);
                 let eta = match slot.eta_secs() {
@@ -687,86 +457,40 @@ fn draw_encode_panel(f: &mut Frame, area: Rect, app: &App) {
                 let label = if full.chars().count() <= available {
                     full
                 } else {
-                    let compact = format!(
-                        "{} · {:.0}% · {:.2}x · {position}/{length} · eta: {eta} · size: {output_share} of orig",
-                        truncate(&slot.name, 28),
-                        pct,
-                        slot.speed,
-                    );
-                    if compact.chars().count() <= available {
-                        compact
-                    } else {
-                        truncate(&compact, available)
-                    }
+                    let compact = format!("{} · {:.0}% · {:.2}x · {position}/{length} · eta: {eta} · size: {output_share} of orig", truncate(&slot.name, 28), pct, slot.speed,);
+                    if compact.chars().count() <= available { compact } else { truncate(&compact, available) }
                 };
-                f.render_widget(
-                    Gauge::default()
-                        .gauge_style(Style::new().fg(ACCENT).bg(Color::Rgb(30, 34, 46)))
-                        .ratio(slot.frac.clamp(0.0, 1.0))
-                        .label(label),
-                    area_row,
-                );
+                f.render_widget(Gauge::default().gauge_style(Style::new().fg(ACCENT).bg(Color::Rgb(30, 34, 46))).ratio(slot.frac.clamp(0.0, 1.0)).label(label), area_row);
             }
             None => {
-                f.render_widget(
-                    Paragraph::new(Line::from(Span::styled(
-                        "idle",
-                        Style::new().fg(Color::Rgb(70, 70, 80)),
-                    ))),
-                    area_row,
-                );
+                f.render_widget(Paragraph::new(Line::from(Span::styled("idle", Style::new().fg(Color::Rgb(70, 70, 80))))), area_row);
             }
         }
     }
 }
 
 fn draw_summary_panel(f: &mut Frame, area: Rect, app: &App) {
-    let block = Block::bordered()
-        .title(" Totals ")
-        .border_style(Style::new().fg(Color::Rgb(70, 75, 95)));
+    let block = Block::bordered().title(" Totals ").border_style(Style::new().fg(Color::Rgb(70, 75, 95)));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
     let Some(enc) = &app.enc else { return };
-    let ok: Vec<&crate::encode::JobResult> =
-        enc.results.iter().filter(|r| r.outcome.is_success()).collect();
+    let ok: Vec<&crate::encode::JobResult> = enc.results.iter().filter(|r| r.outcome.is_success()).collect();
     let before: u64 = ok.iter().map(|r| r.old_size).sum();
     let after: u64 = ok.iter().map(|r| r.new_size).sum();
     let saved = before as i64 - after as i64;
-    let pct = if before > 0 {
-        saved as f64 * 100.0 / before as f64
-    } else {
-        0.0
-    };
+    let pct = if before > 0 { saved as f64 * 100.0 / before as f64 } else { 0.0 };
     let total_secs: f64 = ok.iter().map(|r| r.total_secs).sum();
-    let rejected = enc
-        .results
-        .iter()
-        .filter(|r| r.outcome == Outcome::Rejected)
-        .count();
-    let failed = enc
-        .results
-        .iter()
-        .filter(|r| r.outcome == Outcome::Failed)
-        .count();
-    let cancelled = enc
-        .results
-        .iter()
-        .filter(|r| r.outcome == Outcome::Cancelled)
-        .count();
+    let rejected = enc.results.iter().filter(|r| r.outcome == Outcome::Rejected).count();
+    let failed = enc.results.iter().filter(|r| r.outcome == Outcome::Failed).count();
+    let cancelled = enc.results.iter().filter(|r| r.outcome == Outcome::Cancelled).count();
 
     let lines = vec![
         Line::from(vec![
             Span::styled("processed ", Style::new().fg(DIM)),
-            Span::styled(
-                format!("{} files", ok.len()),
-                Style::new().fg(GOOD).add_modifier(Modifier::BOLD),
-            ),
+            Span::styled(format!("{} files", ok.len()), Style::new().fg(GOOD).add_modifier(Modifier::BOLD)),
             Span::styled(" in ", Style::new().fg(DIM)),
-            Span::styled(
-                fmt::duration(enc.elapsed.max(total_secs)),
-                Style::new().fg(Color::White),
-            ),
+            Span::styled(fmt::duration(enc.elapsed.max(total_secs)), Style::new().fg(Color::White)),
             Span::styled(" · rejected ", Style::new().fg(DIM)),
             Span::styled(rejected.to_string(), Style::new().fg(WARN)),
             Span::styled(" · failed ", Style::new().fg(DIM)),
@@ -780,41 +504,17 @@ fn draw_summary_panel(f: &mut Frame, area: Rect, app: &App) {
             Span::styled(" → ", Style::new().fg(DIM)),
             Span::styled(fmt::bytes(after), Style::new().fg(Color::Rgb(190, 190, 200))),
             Span::styled("  freed ", Style::new().fg(DIM)),
-            Span::styled(
-                format!("{} ({:.1}%)", fmt::bytes(saved.max(0) as u64), pct),
-                Style::new().fg(GOOD).add_modifier(Modifier::BOLD),
-            ),
+            Span::styled(format!("{} ({:.1}%)", fmt::bytes(saved.max(0) as u64), pct), Style::new().fg(GOOD).add_modifier(Modifier::BOLD)),
         ]),
         Line::from(vec![
             Span::styled("report ", Style::new().fg(DIM)),
-            Span::styled(
-                app.report_path
-                    .as_ref()
-                    .map(|p| p.display().to_string())
-                    .unwrap_or_else(|| "—".into()),
-                Style::new().fg(ACCENT),
-            ),
-            Span::styled(
-                "   (enter = rescan · q = quit)",
-                Style::new().fg(Color::Rgb(70, 70, 80)),
-            ),
+            Span::styled(app.report_path.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| "—".into()), Style::new().fg(ACCENT)),
+            Span::styled("   (enter = rescan · q = quit)", Style::new().fg(Color::Rgb(70, 70, 80))),
         ]),
         Line::from(vec![
             Span::styled("log    ", Style::new().fg(DIM)),
-            Span::styled(
-                app.log_path()
-                    .map(|p| p.display().to_string())
-                    .unwrap_or_else(|| "— (not writable)".into()),
-                Style::new().fg(ACCENT),
-            ),
-            Span::styled(
-                if failed > 0 {
-                    "   ← full error details for failed files"
-                } else {
-                    ""
-                },
-                Style::new().fg(BAD),
-            ),
+            Span::styled(app.log_path().map(|p| p.display().to_string()).unwrap_or_else(|| "— (not writable)".into()), Style::new().fg(ACCENT)),
+            Span::styled(if failed > 0 { "   ← full error details for failed files" } else { "" }, Style::new().fg(BAD)),
         ]),
     ];
     f.render_widget(Paragraph::new(lines), inner);
@@ -824,39 +524,22 @@ fn draw_summary_panel(f: &mut Frame, area: Rect, app: &App) {
 
 fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
     let keys: Vec<(&str, &str)> = if app.settings {
-        vec![
-            ("↑↓", "field"),
-            ("enter", "edit/toggle"),
-            ("s", "save+rescan"),
-            ("esc", "close"),
-        ]
+        vec![("↑↓", "field"), ("enter", "edit/toggle"), ("s", "save+rescan"), ("esc", "close")]
     } else if app.confirm {
         vec![("enter", "start"), ("d", "dry-run"), ("esc", "cancel")]
     } else {
         match app.phase {
             Phase::Scanning => vec![("t", "settings"), ("q", "quit")],
-            Phase::Review => vec![
-                ("↑↓", "move"),
-                ("space", "toggle"),
-                ("a", "all"),
-                ("s", "sort"),
-                ("f", "filter"),
-                ("d", "dry-run"),
-                ("r", "rescan"),
-                ("t", "settings"),
-                ("enter", "encode"),
-                ("q", "quit"),
-            ],
+            Phase::Review => {
+                vec![("↑↓", "move"), ("space", "toggle"), ("a", "all"), ("s", "sort"), ("f", "filter"), ("d", "dry-run"), ("r", "rescan"), ("t", "settings"), ("enter", "encode"), ("q", "quit")]
+            }
             Phase::Encoding => vec![("p", "pause"), ("c", "cancel"), ("q", "quit")],
             Phase::Summary => vec![("enter", "rescan"), ("q", "quit")],
         }
     };
     let mut spans = Vec::new();
     for (k, d) in keys {
-        spans.push(Span::styled(
-            format!(" {k} "),
-            Style::new().fg(Color::Black).bg(Color::Rgb(110, 115, 135)),
-        ));
+        spans.push(Span::styled(format!(" {k} "), Style::new().fg(Color::Black).bg(Color::Rgb(110, 115, 135))));
         spans.push(Span::styled(format!(" {d} "), Style::new().fg(DIM)));
     }
     f.render_widget(Paragraph::new(Line::from(spans)), area);
@@ -867,20 +550,13 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
 fn centered(width: u16, height: u16, area: Rect) -> Rect {
     let w = width.min(area.width);
     let h = height.min(area.height);
-    Rect {
-        x: area.x + (area.width - w) / 2,
-        y: area.y + (area.height - h) / 2,
-        width: w,
-        height: h,
-    }
+    Rect { x: area.x + (area.width - w) / 2, y: area.y + (area.height - h) / 2, width: w, height: h }
 }
 
 fn draw_confirm(f: &mut Frame, area: Rect, app: &App) {
     let popup = centered(72, 12, area);
     f.render_widget(Clear, popup);
-    let block = Block::bordered()
-        .title(" Start encoding? ")
-        .border_style(Style::new().fg(WARN));
+    let block = Block::bordered().title(" Start encoding? ").border_style(Style::new().fg(WARN));
     let inner = block.inner(popup);
     f.render_widget(block, popup);
 
@@ -889,26 +565,14 @@ fn draw_confirm(f: &mut Frame, area: Rect, app: &App) {
     let lines = vec![
         Line::from(vec![
             Span::styled("files: ", Style::new().fg(DIM)),
-            Span::styled(
-                n.to_string(),
-                Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
-            ),
+            Span::styled(n.to_string(), Style::new().fg(ACCENT).add_modifier(Modifier::BOLD)),
             Span::styled("  total: ", Style::new().fg(DIM)),
             Span::styled(fmt::bytes(bytes), Style::new().fg(ACCENT)),
         ]),
-        Line::from(vec![
-            Span::styled("encoder: ", Style::new().fg(DIM)),
-            Span::styled(app.cfg.preset_summary(), Style::new().fg(Color::White)),
-        ]),
+        Line::from(vec![Span::styled("encoder: ", Style::new().fg(DIM)), Span::styled(app.cfg.preset_summary(), Style::new().fg(Color::White))]),
         Line::from(vec![
             Span::styled("safety: ", Style::new().fg(DIM)),
-            Span::styled(
-                format!(
-                    "length must match within {}s and the result must be smaller",
-                    app.cfg.duration_tolerance_secs
-                ),
-                Style::new().fg(Color::Rgb(190, 190, 200)),
-            ),
+            Span::styled(format!("length must match within {}s and the result must be smaller", app.cfg.duration_tolerance_secs), Style::new().fg(Color::Rgb(190, 190, 200))),
         ]),
         Line::from(vec![
             Span::styled("mode: ", Style::new().fg(DIM)),
@@ -920,9 +584,7 @@ fn draw_confirm(f: &mut Frame, area: Rect, app: &App) {
                 } else {
                     "originals REPLACED in place"
                 },
-                Style::new()
-                    .fg(if app.cfg.dry_run { WARN } else { GOOD })
-                    .add_modifier(Modifier::BOLD),
+                Style::new().fg(if app.cfg.dry_run { WARN } else { GOOD }).add_modifier(Modifier::BOLD),
             ),
         ]),
         Line::from(""),
@@ -941,9 +603,7 @@ fn draw_confirm(f: &mut Frame, area: Rect, app: &App) {
 fn draw_settings(f: &mut Frame, area: Rect, app: &App) {
     let popup = centered(84, 20, area);
     f.render_widget(Clear, popup);
-    let block = Block::bordered()
-        .title(" Settings ")
-        .border_style(Style::new().fg(ACCENT));
+    let block = Block::bordered().title(" Settings ").border_style(Style::new().fg(ACCENT));
     let inner = block.inner(popup);
     f.render_widget(block, popup);
 
@@ -961,23 +621,10 @@ fn draw_settings(f: &mut Frame, area: Rect, app: &App) {
             field.value(&app.cfg)
         };
         let marker = if selected { "▸ " } else { "  " };
-        let label_style = if selected {
-            Style::new().fg(Color::White).bg(SEL_BG)
-        } else {
-            Style::new().fg(DIM)
-        };
+        let label_style = if selected { Style::new().fg(Color::White).bg(SEL_BG) } else { Style::new().fg(DIM) };
         let spans = vec![
             Span::styled(format!("{marker}{:<26}", field.label()), label_style),
-            Span::styled(
-                format!("{value:<28}"),
-                Style::new()
-                    .fg(if editing { WARN } else { ACCENT })
-                    .add_modifier(if editing {
-                        Modifier::BOLD
-                    } else {
-                        Modifier::empty()
-                    }),
-            ),
+            Span::styled(format!("{value:<28}"), Style::new().fg(if editing { WARN } else { ACCENT }).add_modifier(if editing { Modifier::BOLD } else { Modifier::empty() })),
             Span::styled(field.help(), Style::new().fg(Color::Rgb(90, 90, 100))),
         ];
         lines.push(Line::from(spans));
@@ -985,14 +632,8 @@ fn draw_settings(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(Paragraph::new(lines), rows[0]);
 
     let hint = vec![
-        Line::from(Span::styled(
-            "type a value, enter to confirm · esc to discard",
-            Style::new().fg(DIM),
-        )),
-        Line::from(Span::styled(
-            format!("file: {}", app.cfg_path.display()),
-            Style::new().fg(Color::Rgb(90, 90, 100)),
-        )),
+        Line::from(Span::styled("type a value, enter to confirm · esc to discard", Style::new().fg(DIM))),
+        Line::from(Span::styled(format!("file: {}", app.cfg_path.display()), Style::new().fg(Color::Rgb(90, 90, 100)))),
     ];
     f.render_widget(Paragraph::new(hint).wrap(Wrap { trim: true }), rows[1]);
 }
@@ -1015,7 +656,5 @@ fn truncate(s: &str, max: usize) -> String {
 }
 
 fn file_name(p: &std::path::Path) -> String {
-    p.file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| p.display().to_string())
+    p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| p.display().to_string())
 }

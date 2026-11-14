@@ -1,0 +1,7 @@
+# No maximum line length: rustfmt is not allowed to break a line just because it
+# is long, so expressions/calls/chains stay on one line as written.
+# `use_small_heuristics = "Max"` pushes every width heuristic (fn call, chain,
+# array, struct lit, if/else, ...) up to `max_width`, so nothing gets wrapped
+# behind our back; the value below is simply "effectively unlimited".
+max_width = 200
+use_small_heuristics = "Max"

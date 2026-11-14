@@ -38,58 +38,25 @@ pub fn write(results: &[JobResult], cfg: &Config) -> PathBuf {
 
     let mut txt = String::new();
     let replaced = results.iter().filter(|r| r.outcome.is_success()).count();
-    let failed = results
-        .iter()
-        .filter(|r| matches!(r.outcome, crate::encode::Outcome::Failed))
-        .count();
-    let rejected = results
-        .iter()
-        .filter(|r| matches!(r.outcome, crate::encode::Outcome::Rejected))
-        .count();
-    let cancelled = results
-        .iter()
-        .filter(|r| matches!(r.outcome, crate::encode::Outcome::Cancelled))
-        .count();
+    let failed = results.iter().filter(|r| matches!(r.outcome, crate::encode::Outcome::Failed)).count();
+    let rejected = results.iter().filter(|r| matches!(r.outcome, crate::encode::Outcome::Rejected)).count();
+    let cancelled = results.iter().filter(|r| matches!(r.outcome, crate::encode::Outcome::Cancelled)).count();
     let old_total: u64 = results.iter().map(|r| r.old_size).sum();
-    let new_total: u64 = results
-        .iter()
-        .filter(|r| r.outcome.is_success())
-        .map(|r| r.new_size)
-        .sum();
+    let new_total: u64 = results.iter().filter(|r| r.outcome.is_success()).map(|r| r.new_size).sum();
     let saved: i64 = results.iter().map(|r| r.saved_bytes()).sum();
 
     let _ = writeln!(txt, "Video Quality Controller report — {stamp}");
     let _ = writeln!(txt, "root: {}", cfg.root.display());
-    let _ = writeln!(
-        txt,
-        "preset: AV1/SVT crf{} preset{} {} · AAC {}k {}ch · threshold {} kbps",
-        cfg.crf,
-        cfg.preset,
-        cfg.pix_fmt,
-        cfg.audio_bitrate_kbps,
-        cfg.audio_channels,
-        cfg.bitrate_threshold_kbps
-    );
-    let _ = writeln!(
-        txt,
-        "processed {} · replaced {} · rejected {} · failed {} · cancelled {}",
-        results.len(),
-        replaced,
-        rejected,
-        failed,
-        cancelled
-    );
+    let _ =
+        writeln!(txt, "preset: AV1/SVT crf{} preset{} {} · AAC {}k {}ch · threshold {} kbps", cfg.crf, cfg.preset, cfg.pix_fmt, cfg.audio_bitrate_kbps, cfg.audio_channels, cfg.bitrate_threshold_kbps);
+    let _ = writeln!(txt, "processed {} · replaced {} · rejected {} · failed {} · cancelled {}", results.len(), replaced, rejected, failed, cancelled);
     let _ = writeln!(
         txt,
         "before {} · after {} · saved {} ({:.1}%)",
         fmt::bytes(old_total),
         fmt::bytes(new_total),
         fmt::bytes(saved.max(0) as u64),
-        if old_total > 0 {
-            saved as f64 * 100.0 / old_total as f64
-        } else {
-            0.0
-        }
+        if old_total > 0 { saved as f64 * 100.0 / old_total as f64 } else { 0.0 }
     );
     let _ = writeln!(txt);
     for r in results {
@@ -118,17 +85,10 @@ pub fn write(results: &[JobResult], cfg: &Config) -> PathBuf {
 }
 
 fn csv_escape(s: &str) -> String {
-    if s.contains(',') || s.contains('"') || s.contains('\n') {
-        format!("\"{}\"", s.replace('"', "\"\""))
-    } else {
-        s.to_string()
-    }
+    if s.contains(',') || s.contains('"') || s.contains('\n') { format!("\"{}\"", s.replace('"', "\"\"")) } else { s.to_string() }
 }
 
 fn timestamp() -> String {
     let now = fmt::local_now();
-    format!(
-        "{:04}{:02}{:02}-{:02}{:02}{:02}",
-        now.year, now.month, now.day, now.hour, now.minute, now.second
-    )
+    format!("{:04}{:02}{:02}-{:02}{:02}{:02}", now.year, now.month, now.day, now.hour, now.minute, now.second)
 }
