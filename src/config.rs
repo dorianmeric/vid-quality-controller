@@ -5,6 +5,11 @@ use std::path::{Path, PathBuf};
 
 pub const CONFIG_FILE: &str = "config.json";
 
+/// Share of the candidate threshold used as the two-pass VBR target. Sitting a
+/// bit under the threshold is the whole point: a result that lands there stops
+/// being a candidate on the next scan.
+const TWO_PASS_TARGET_PCT: u64 = 75;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
@@ -15,12 +20,24 @@ pub struct Config {
     /// Ignore files smaller than this (not worth the CPU).
     pub min_size_mb: f64,
     /// SVT-AV1 quality (lower = better/bigger). 35 is the house default.
+    /// Only used when `two_pass` is off: SVT-AV1 rejects multi-pass with CRF.
     pub crf: u8,
+    /// Ceiling for the output video bitrate, in kbit/s (`-maxrate`). 0 = no cap.
+    /// SVT-AV1 only honours this in CRF mode, so it is ignored while `two_pass`
+    /// is on: VBR two-pass is a hard error upstream ("Max Bitrate only
+    /// supported with CRF mode").
+    pub max_bitrate_kbps: u32,
     /// SVT-AV1 speed preset 0..13 (higher = faster, bigger files).
     pub preset: u8,
+    /// Encode in two passes (analysis + encode) at a VBR target instead of
+    /// single-pass CRF. Costs an extra decode of the source per file, but
+    /// spreads the bits across the file far more evenly.
+    pub two_pass: bool,
     /// Output pixel format. `yuv420p` = 8-bit, most compatible.
     pub pix_fmt: String,
+    /// AAC target bitrate for the audio re-encode.
     pub audio_bitrate_kbps: u32,
+    /// Audio channel count for the audio re-encode (2 = stereo).
     pub audio_channels: u16,
     /// Add `+faststart` for mp4/m4v outputs (slower, better for streaming).
     pub faststart: bool,
@@ -51,7 +68,9 @@ impl Default for Config {
             bitrate_threshold_kbps: 2000,
             min_size_mb: 20.0,
             crf: 35,
+            max_bitrate_kbps: 2000,
             preset: 6,
+            two_pass: true,
             pix_fmt: "yuv420p".into(),
             audio_bitrate_kbps: 160,
             audio_channels: 2,
@@ -143,9 +162,27 @@ impl Config {
         }
     }
 
+    /// Video bitrate the two-pass encode aims for. SVT-AV1 refuses multi-pass
+    /// with CRF, so `two_pass` always runs VBR.
+    pub fn two_pass_target_kbps(&self) -> u32 {
+        (self.bitrate_threshold_kbps as u64 * TWO_PASS_TARGET_PCT / 100).max(32) as u32
+    }
+
+    /// Short label for the video rate-control mode: `2-pass 1500k`,
+    /// `crf35 max 2000k` or plain `crf35` when no ceiling is set.
+    pub fn video_mode(&self) -> String {
+        if self.two_pass {
+            format!("2-pass {}k", self.two_pass_target_kbps())
+        } else if self.max_bitrate_kbps > 0 {
+            format!("crf{} max {}k", self.crf, self.max_bitrate_kbps)
+        } else {
+            format!("crf{}", self.crf)
+        }
+    }
+
     /// One-line summary of the encode preset, used in the header.
     pub fn preset_summary(&self) -> String {
-        format!("AV1/SVT crf{} p{} · AAC {}k {}ch · thr {} kbps · {} jobs", self.crf, self.preset, self.audio_bitrate_kbps, self.audio_channels, self.bitrate_threshold_kbps, self.parallelism)
+        format!("AV1/SVT {} p{} · AAC {}k {}ch · thr {} kbps · {} jobs", self.video_mode(), self.preset, self.audio_bitrate_kbps, self.audio_channels, self.bitrate_threshold_kbps, self.parallelism)
     }
 }
 

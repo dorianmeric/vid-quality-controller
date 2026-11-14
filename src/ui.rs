@@ -342,7 +342,7 @@ fn draw_review_panel(f: &mut Frame, area: Rect, app: &App) {
         Line::from(vec![
             Span::styled("encode ", Style::new().fg(DIM)),
             Span::styled(
-                format!("libsvtav1 crf{} preset{} → AAC {}k {}ch", app.cfg.crf, app.cfg.preset, app.cfg.audio_bitrate_kbps, app.cfg.audio_channels),
+                format!("libsvtav1 {} preset{} → AAC {}k {}ch (copied if that fails)", app.cfg.video_mode(), app.cfg.preset, app.cfg.audio_bitrate_kbps, app.cfg.audio_channels),
                 Style::new().fg(Color::Rgb(190, 190, 200)),
             ),
             Span::styled("  (resolution & framerate untouched)", Style::new().fg(DIM)),
@@ -601,7 +601,7 @@ fn draw_confirm(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn draw_settings(f: &mut Frame, area: Rect, app: &App) {
-    let popup = centered(84, 20, area);
+    let popup = centered(84, 22, area);
     f.render_widget(Clear, popup);
     let block = Block::bordered().title(" Settings ").border_style(Style::new().fg(ACCENT));
     let inner = block.inner(popup);

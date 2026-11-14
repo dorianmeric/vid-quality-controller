@@ -57,6 +57,10 @@ fn main() -> Result<()> {
                 overrides.push(("jobs".into(), args[i + 1].clone()));
                 i += 2;
             }
+            "--max-bitrate" if i + 1 < args.len() => {
+                overrides.push(("max_bitrate".into(), args[i + 1].clone()));
+                i += 2;
+            }
             "--headless" => {
                 headless = true;
                 i += 1;
@@ -68,6 +72,14 @@ fn main() -> Result<()> {
             }
             "--dry-run" => {
                 overrides.push(("dry_run".into(), "true".into()));
+                i += 1;
+            }
+            "--two-pass" => {
+                overrides.push(("two_pass".into(), "true".into()));
+                i += 1;
+            }
+            "--no-two-pass" => {
+                overrides.push(("two_pass".into(), "false".into()));
                 i += 1;
             }
             other => {
@@ -101,7 +113,13 @@ fn main() -> Result<()> {
                     cfg.parallelism = v;
                 }
             }
+            "max_bitrate" => {
+                if let Ok(v) = value.parse() {
+                    cfg.max_bitrate_kbps = v;
+                }
+            }
             "dry_run" => cfg.dry_run = true,
+            "two_pass" => cfg.two_pass = value != "false",
             _ => {}
         }
     }
@@ -168,7 +186,11 @@ OPTIONS:
     --threshold <KBPS>   bitrate threshold in kbit/s (default 2000)
     --min-size <MB>      ignore files smaller than this (default 20)
     --preset <0-13>      SVT-AV1 speed preset (default 6)
+    --max-bitrate <KBPS> cap the output video bitrate, 0 = off (default 2000,
+                         single-pass CRF only — VBR two-pass cannot take one)
     --jobs <N>           concurrent encodes (default 4)
+    --two-pass           two-pass VBR encode (default, see below)
+    --no-two-pass        single-pass CRF encode instead
     --dry-run            encode and verify, but never touch the originals
     --headless           no TUI: scan, encode every candidate, print a report
     --scan-only          no TUI: scan and list candidates, then exit
@@ -181,9 +203,13 @@ KEYS:
     encoding: p pause · c cancel · q quit
     summary:  enter rescan · q quit
 
-The encode preset is AV1 (SVT) CRF 35, resolution and framerate untouched,
-audio re-encoded to AAC 160 kbit/s stereo. A result only replaces the original
-when it probes cleanly, has the same length (within tolerance) and is smaller.
+The encode preset is AV1 (SVT) two-pass VBR, aiming at 75% of the bitrate
+threshold (CRF is only used with --no-two-pass: SVT-AV1 refuses multi-pass in
+CRF mode). Resolution and framerate are untouched, audio is re-encoded to AAC
+160 kbit/s stereo; if an encode fails anyway, the job is retried once with the
+audio stream-copied instead (no audio decode), which rescues files with damaged
+or unsupported audio tracks. A result only replaces the original when it probes
+cleanly, has the same length (within tolerance) and is smaller.
 "
     );
 }

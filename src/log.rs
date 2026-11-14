@@ -88,14 +88,14 @@ impl RunLog {
              started : {started}\n\
              exe     : {exe}\n\
              root    : {}\n\
-             preset  : AV1/SVT crf{} preset{} {} · AAC {}k {}ch\n\
+             preset  : AV1/SVT {} preset{} {} · AAC {}k {}ch (copied if encode fails)\n\
              filter  : total bitrate > {} kbps, size >= {} MB, skip_av1={}\n\
              workers : {} encode / {} probe · dry_run={} · keep_backup={}\n\
              ffmpeg  : {}\n\
              ffprobe : {}\n\
              \n",
             cfg.root.display(),
-            cfg.crf,
+            cfg.video_mode(),
             cfg.preset,
             cfg.pix_fmt,
             cfg.audio_bitrate_kbps,

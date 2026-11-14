@@ -1,8 +1,14 @@
 //! Encoding workers: ffmpeg (libsvtav1) + verification + safe in-place replace.
 //!
 //! Preset (defaults, all configurable):
-//!   -v: libsvtav1 -crf 35 -preset 6 -pix_fmt yuv420p  (resolution & fps untouched)
-//!   -a: aac -b:a 160k -ac 2
+//!   -v: libsvtav1 -b:v <75% of the threshold> -preset 6 -pix_fmt yuv420p
+//!       in two passes (analysis + encode); with `two_pass = false` it is a
+//!       single pass at -crf 35 instead, because SVT-AV1 refuses multi-pass
+//!       in CRF mode. Resolution & fps are untouched either way.
+//!   -a: aac -b:a 160k -ac 2 — re-encoded by default. When an encode fails, the
+//!       job is retried once with the audio stream-copied instead: that needs no
+//!       audio decoder, so damaged or unsupported audio tracks (which can abort
+//!       the whole ffmpeg pipeline) no longer block the shrink.
 //!
 //! The muxer is always forced with `-f` (see `Container`): ffmpeg would otherwise
 //! pick it from the output extension and reject AV1/AAC there (e.g. `.m4v` selects
@@ -123,7 +129,12 @@ pub struct EncodeOpts {
     pub ffprobe: PathBuf,
     pub parallelism: usize,
     pub crf: u8,
+    /// `-maxrate` ceiling in kbit/s, 0 = none. CRF mode only (see
+    /// `encode_command`): SVT-AV1 rejects a max bitrate in VBR mode.
+    pub max_bitrate_kbps: u32,
     pub preset: u8,
+    pub two_pass: bool,
+    pub two_pass_target_kbps: u32,
     pub pix_fmt: String,
     pub audio_bitrate_kbps: u32,
     pub audio_channels: u16,
@@ -141,7 +152,10 @@ impl EncodeOpts {
             ffprobe: cfg.ffprobe.clone(),
             parallelism: cfg.parallelism.max(1),
             crf: cfg.crf,
+            max_bitrate_kbps: cfg.max_bitrate_kbps,
             preset: cfg.preset,
+            two_pass: cfg.two_pass,
+            two_pass_target_kbps: cfg.two_pass_target_kbps(),
             pix_fmt: cfg.pix_fmt.clone(),
             audio_bitrate_kbps: cfg.audio_bitrate_kbps,
             audio_channels: cfg.audio_channels,
@@ -303,117 +317,47 @@ fn encode_and_verify(
     t0: Instant,
 ) -> Result<JobResult, JobError> {
     let job_id = job_id(&job.path);
+    let passlog = out_path.parent().unwrap_or(Path::new(".")).join("vqc-pass");
 
-    let mut cmd = Command::new(&opts.ffmpeg);
-    cmd.args(["-hide_banner", "-nostdin", "-y", "-loglevel", "error"])
-        .args(["-progress", "pipe:1", "-nostats"])
-        .arg("-i")
-        .arg(&job.path)
-        .args(["-map", "0:v:0", "-map", "0:a?", "-map_metadata", "0"])
-        .args(["-c:v", "libsvtav1"])
-        .args(["-crf", &opts.crf.to_string()])
-        .args(["-preset", &opts.preset.to_string()])
-        .args(["-pix_fmt", &opts.pix_fmt])
-        .args(["-c:a", "aac"])
-        .args(["-b:a", &format!("{}k", opts.audio_bitrate_kbps)])
-        .args(["-ac", &opts.audio_channels.to_string()]);
-    if container == Container::Mp4 && opts.faststart {
-        cmd.args(["-movflags", "+faststart"]);
-    }
-    for a in &opts.extra_args {
-        cmd.arg(a);
-    }
-    // Force the muxer: never let the output extension pick the format, since some
-    // extensions map to muxers that reject AV1 (ipod/m4v, mov) or AAC (webm).
-    // This goes after the extra args so it cannot be overridden by accident.
-    cmd.args(["-f", container.muxer()]).arg(out_path);
-
-    cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
-
-    let mut child = cmd.spawn().with_context(|| format!("spawning {}", opts.ffmpeg.display()))?;
-    let command_line = command_line(&cmd);
-    let pid = child.id();
-    control.register(job_id, pid);
-
-    // Drain stderr so ffmpeg can never block on a full pipe.
-    let stderr_tail = Arc::new(Mutex::new(VecDeque::<String>::new()));
-    let stderr_reader = {
-        let tail = Arc::clone(&stderr_tail);
-        let stderr = child.stderr.take();
-        thread::spawn(move || {
-            if let Some(err) = stderr {
-                let reader = BufReader::new(err);
-                for line in reader.lines().map_while(Result::ok) {
-                    if line.trim().is_empty() {
-                        continue;
-                    }
-                    // SVT-AV1 is chatty on stderr even at -loglevel error;
-                    // drop its banner noise so real errors stay in the tail.
-                    if line.contains("Svt[info]") {
-                        continue;
-                    }
-                    if let Ok(mut t) = tail.lock() {
-                        t.push_back(line);
-                        while t.len() > 40 {
-                            t.pop_front();
-                        }
-                    }
-                }
-            }
-        })
-    };
-
-    let mut last_emit = Instant::now();
-    let mut last_secs = 0.0f64;
+    // Pass 1 analyses the source and writes the stats file, pass 2 encodes with
+    // it. Single-pass CRF is just a one-entry layout.
+    let layout: &[PassSpec] = if opts.two_pass { &TWO_PASS_LAYOUT } else { &SINGLE_PASS_LAYOUT };
+    let base_audio = base_audio_mode(opts);
     let mut last_speed = 0.0f64;
     let mut cancelled = false;
+    let mut failure: Option<PassOutcome> = None;
+    // Set when the audio had to be given up on: reported in the result note.
+    let mut audio_copied = false;
+    let mut retried_with_copy = false;
 
-    if let Some(stdout) = child.stdout.take() {
-        let reader = BufReader::new(stdout);
-        for line in reader.lines() {
-            let Ok(line) = line else { break };
-            let Some((key, value)) = line.split_once('=') else {
-                continue;
-            };
-            match key.trim() {
-                "out_time_us" => {
-                    if let Ok(us) = value.trim().parse::<i64>() {
-                        last_secs = (us as f64 / 1_000_000.0).max(0.0);
-                    }
-                }
-                "speed" => {
-                    last_speed = value.trim().trim_end_matches('x').parse().unwrap_or(0.0);
-                }
-                "progress" => {
-                    if control.is_cancelled() {
-                        cancelled = true;
-                        control.cancel();
-                    }
-                    if last_emit.elapsed() >= Duration::from_millis(180) {
-                        last_emit = Instant::now();
-                        let out_bytes = std::fs::metadata(out_path).map(|m| m.len()).unwrap_or(0);
-                        let _ = tx.send(Ev::JobProgress { id: job_id, out_secs: last_secs, speed: last_speed, out_bytes });
-                    }
-                }
-                _ => {}
-            }
+    for &spec in layout {
+        let cmd = encode_command(opts, job, spec.pass, &passlog, out_path, container, base_audio);
+        let mut outcome = run_pass(cmd, job.duration_secs, control, tx, job_id, out_path, spec)?;
+
+        // Fallback: the audio re-encode is the one part we can cheaply give up.
+        // Retrying needs no new analysis pass (pass 1 only ever reads video), so
+        // this costs one encode - and it rescues files whose audio track is
+        // damaged or whose audio codec has no decoder here.
+        if base_audio == AudioMode::Reencode && should_retry_with_copied_audio(spec.pass, outcome.cancelled, outcome.status.success()) {
+            retried_with_copy = true;
+            let _ = std::fs::remove_file(out_path);
+            let retry = encode_command(opts, job, spec.pass, &passlog, out_path, container, AudioMode::Copy);
+            outcome = run_pass(retry, job.duration_secs, control, tx, job_id, out_path, spec)?;
+            audio_copied = outcome.status.success() && !outcome.cancelled;
+        }
+
+        last_speed = outcome.speed;
+        if outcome.cancelled {
+            cancelled = true;
+            break;
+        }
+        if !outcome.status.success() {
+            failure = Some(outcome);
+            break;
         }
     }
 
-    let status = child.wait().context("waiting for ffmpeg")?;
-    let _ = stderr_reader.join();
-    control.unregister(job_id);
     let encode_secs = t0.elapsed().as_secs_f64();
-
-    // Final progress tick regardless of throttling.
-    let out_bytes = std::fs::metadata(out_path).map(|m| m.len()).unwrap_or(0);
-    let _ = tx.send(Ev::JobProgress { id: job_id, out_secs: last_secs.max(job.duration_secs), speed: last_speed, out_bytes });
 
     if cancelled || control.is_cancelled() {
         let _ = std::fs::remove_file(out_path);
@@ -434,17 +378,26 @@ fn encode_and_verify(
         });
     }
 
-    if !status.success() {
-        let tail: Vec<String> = stderr_tail.lock().map(|t| t.iter().cloned().collect()).unwrap_or_default();
+    if let Some(failed) = failure {
         let _ = std::fs::remove_file(out_path);
-        let reached =
-            if job.duration_secs > 0.0 { format!("{:.0}% of {}", (last_secs / job.duration_secs * 100.0).clamp(0.0, 100.0), crate::fmt::duration(job.duration_secs)) } else { "?".to_string() };
-        let mut detail = format!("exit: {status}\nsource: {}\nreached: {reached} after {encode_secs:.1}s\ncommand: {command_line}\nstderr:", job.path.display());
-        if tail.is_empty() {
+        let reached = if job.duration_secs > 0.0 {
+            format!("{:.0}% of {}", (failed.reached_secs / job.duration_secs * 100.0).clamp(0.0, 100.0), crate::fmt::duration(job.duration_secs))
+        } else {
+            "?".to_string()
+        };
+        // Which pass died matters: pass 1 failing usually means an unreadable
+        // source, pass 2 failing is a real encoder/muxer problem.
+        let label = match failed.pass {
+            Some(n) => format!("pass {n}/{}", layout.len()),
+            None => "encode".to_string(),
+        };
+        let status = failed.status;
+        let mut detail = format!("exit: {status}\nsource: {}\n{label} failed at {reached} after {encode_secs:.1}s\ncommand: {}\nstderr:", job.path.display(), failed.command_line);
+        if failed.stderr_tail.is_empty() {
             detail.push_str(" (none)\n");
         } else {
             detail.push('\n');
-            for line in &tail {
+            for line in &failed.stderr_tail {
                 detail.push_str("  ");
                 detail.push_str(line);
                 detail.push('\n');
@@ -452,9 +405,29 @@ fn encode_and_verify(
         }
         // Lead with the error itself: the row in the UI only has room for the
         // start of it, and the timings/exit code are already in the log line.
-        let note = if tail.is_empty() { format!("at {reached} · ffmpeg {status} with no error output (killed?)") } else { format!("at {reached} · {}", summarize_stderr(&tail)) };
+        let damaged = looks_like_damaged_source(&failed.stderr_tail);
+        if damaged {
+            detail.push_str("\nhint: the source stops decoding here, so the file looks damaged or\n      truncated. Nothing in the settings fixes that: the original was left\n      untouched, redownload it (or trim the readable part and encode that).\n");
+        } else if looks_like_audio_mux_rejection(&failed.stderr_tail) {
+            detail.push_str(
+                "\nhint: the audio is re-encoded to AAC, and this container cannot hold it.\n      Rename the source to .mkv (that muxer takes anything), or change the audio\n      settings / point ffmpeg_extra_args at an audio codec the container accepts.\n",
+            );
+        }
+        if retried_with_copy {
+            detail.push_str("\nnote: retried once with the audio stream-copied instead of re-encoded;\n      that attempt failed too.\n");
+        }
+        let note = if failed.stderr_tail.is_empty() {
+            format!("{label} at {reached} · ffmpeg {status} with no error output (killed?)")
+        } else if damaged {
+            format!("{label} at {reached} · source looks damaged · {}", summarize_stderr(&failed.stderr_tail))
+        } else {
+            format!("{label} at {reached} · {}", summarize_stderr(&failed.stderr_tail))
+        };
         return Err(JobError::with_detail(note, detail));
     }
+
+    // Final progress tick regardless of throttling.
+    let _ = tx.send(Ev::JobProgress { id: job_id, out_secs: job.duration_secs, speed: last_speed, out_bytes: std::fs::metadata(out_path).map(|m| m.len()).unwrap_or(0) });
 
     // ---- verification ----
     let info = probe::probe(&opts.ffprobe, out_path).context("probing the encoded file")?;
@@ -475,6 +448,9 @@ fn encode_and_verify(
 
     let new_bitrate = info.bitrate_bps;
     let mut note = format!("duration delta {:+.2}s", info.duration_secs - job.duration_secs);
+    if audio_copied {
+        note.push_str(" · audio copied (re-encode failed)");
+    }
     if final_path != job.path {
         note.push_str(&format!(" · renamed to .{}", ext_of(final_path)));
     }
@@ -515,6 +491,236 @@ fn encode_and_verify(
         note,
         detail: String::new(),
     })
+}
+
+/// What to do with the audio streams.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum AudioMode {
+    /// Normal path: AAC at `audio_bitrate_kbps` / `audio_channels`.
+    Reencode,
+    /// Fallback after a failed encode: mux the source audio as-is.
+    Copy,
+}
+
+/// Where one pass sits on the job's progress bar.
+#[derive(Clone, Copy)]
+struct PassSpec {
+    /// `None` = single-pass CRF, `Some(1|2)` = two-pass VBR.
+    pass: Option<u8>,
+    /// Fraction of the job's bar already filled before this pass starts.
+    done: f64,
+    /// Share of the job's bar this pass fills.
+    share: f64,
+}
+
+const SINGLE_PASS_LAYOUT: [PassSpec; 1] = [PassSpec { pass: None, done: 0.0, share: 1.0 }];
+
+/// Pass 1 only analyses the source (no audio, no real output), so it is far
+/// cheaper than the encode itself: a small slice of the bar keeps the per-file
+/// ETA honest.
+const PASS1_SHARE: f64 = 0.3;
+const TWO_PASS_LAYOUT: [PassSpec; 2] = [PassSpec { pass: Some(1), done: 0.0, share: PASS1_SHARE }, PassSpec { pass: Some(2), done: PASS1_SHARE, share: 1.0 - PASS1_SHARE }];
+
+/// Build one ffmpeg invocation. `pass` is `None` for single-pass CRF, `Some(1)`
+/// for the analysis pass (which only writes the stats file, its output is
+/// discarded) and `Some(2)` for the VBR encode that consumes those stats.
+///
+/// `audio` decides what happens to the audio streams: re-encoded to AAC by
+/// default, or passed through untouched on the fallback retry.
+fn encode_command(opts: &EncodeOpts, job: &MediaInfo, pass: Option<u8>, passlog: &Path, out_path: &Path, container: Container, audio: AudioMode) -> Command {
+    let analysis_only = pass == Some(1);
+    let mut cmd = Command::new(&opts.ffmpeg);
+    cmd.args(["-hide_banner", "-nostdin", "-y", "-loglevel", "error"]).args(["-progress", "pipe:1", "-nostats"]).arg("-i").arg(&job.path).args(["-map", "0:v:0"]);
+    if !analysis_only {
+        cmd.args(["-map", "0:a?", "-map_metadata", "0"]);
+    }
+    cmd.args(["-c:v", "libsvtav1"]);
+    // SVT-AV1 refuses multi-pass in CRF mode ("CRF does not support
+    // multi-pass"), so two-pass always targets VBR.
+    match pass {
+        Some(_) => {
+            cmd.args(["-b:v", &format!("{}k", opts.two_pass_target_kbps)]);
+        }
+        None => {
+            cmd.args(["-crf", &opts.crf.to_string()]);
+            // Peak ceiling for CRF mode. It cannot be combined with the VBR
+            // two-pass mode above: SVT-AV1 rejects it with "Max Bitrate only
+            // supported with CRF mode".
+            if opts.max_bitrate_kbps > 0 {
+                let max = opts.max_bitrate_kbps;
+                cmd.args(["-maxrate", &format!("{max}k"), "-bufsize", &format!("{}k", max.saturating_mul(2))]);
+            }
+        }
+    }
+    cmd.args(["-preset", &opts.preset.to_string()]).args(["-pix_fmt", &opts.pix_fmt]);
+    if let Some(n) = pass {
+        // `:v` matters: `-pass` is a per-stream codec option, so a bare `-pass 2`
+        // would also apply to every audio stream: its encoder would look for a
+        // stats file of its own and fail with "Error reading log file …".
+        cmd.args(["-pass:v", &n.to_string()]).arg("-passlogfile").arg(passlog);
+    }
+    if !analysis_only {
+        match audio {
+            AudioMode::Reencode => {
+                cmd.args(["-c:a", "aac"]).args(["-b:a", &format!("{}k", opts.audio_bitrate_kbps)]).args(["-ac", &opts.audio_channels.to_string()]);
+            }
+            // Fallback only: mux the source audio untouched. No audio decoder is
+            // involved, so a damaged or unsupported track cannot abort the job,
+            // and its quality is preserved exactly as it was.
+            AudioMode::Copy => {
+                cmd.args(["-c:a", "copy"]);
+            }
+        }
+        if container == Container::Mp4 && opts.faststart {
+            cmd.args(["-movflags", "+faststart"]);
+        }
+    }
+    for a in &opts.extra_args {
+        cmd.arg(a);
+    }
+    // Force the muxer: never let the output extension pick the format, since some
+    // extensions map to muxers that reject AV1 (ipod/m4v, mov) or AAC (webm).
+    // This goes after the extra args so it cannot be overridden by accident.
+    if analysis_only {
+        cmd.args(["-f", "null"]).arg(null_sink());
+    } else {
+        cmd.args(["-f", container.muxer()]).arg(out_path);
+    }
+    cmd
+}
+
+/// Discard target for the analysis pass (`null` muxer, nothing is written).
+fn null_sink() -> &'static str {
+    if cfg!(windows) { "NUL" } else { "/dev/null" }
+}
+
+/// Map a position inside one pass onto the job's overall progress bar.
+fn progress_secs(duration_secs: f64, spec: &PassSpec, in_pass_secs: f64) -> f64 {
+    if duration_secs <= 0.0 {
+        return in_pass_secs;
+    }
+    let frac = (in_pass_secs / duration_secs).clamp(0.0, 1.0);
+    (spec.done + spec.share * frac) * duration_secs
+}
+
+/// What one ffmpeg invocation reported back.
+struct PassOutcome {
+    pass: Option<u8>,
+    status: std::process::ExitStatus,
+    command_line: String,
+    stderr_tail: Vec<String>,
+    /// Media position reached inside this pass.
+    reached_secs: f64,
+    speed: f64,
+    cancelled: bool,
+}
+
+/// Which audio mode a job starts in. `audio_bitrate_kbps: 0` means "never
+/// re-encode": the audio is copied as-is from the start, and there is nothing
+/// left for the failure fallback to rescue.
+fn base_audio_mode(opts: &EncodeOpts) -> AudioMode {
+    if opts.audio_bitrate_kbps == 0 { AudioMode::Copy } else { AudioMode::Reencode }
+}
+
+/// The audio fallback only ever applies to the encode pass: pass 1 reads the
+/// video stream alone, so audio cannot be the reason it failed. Success and
+/// cancellation are not failures to recover from either.
+fn should_retry_with_copied_audio(pass: Option<u8>, cancelled: bool, success: bool) -> bool {
+    pass != Some(1) && !cancelled && !success
+}
+
+/// Spawn one pass, stream its `-progress` output, drain stderr and wait for it.
+fn run_pass(mut cmd: Command, duration_secs: f64, control: &Arc<Control>, tx: &Sender<Ev>, id: u64, out_path: &Path, spec: PassSpec) -> Result<PassOutcome> {
+    let program = cmd.get_program().to_string_lossy().to_string();
+    cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    let mut child = cmd.spawn().with_context(|| format!("spawning {program}"))?;
+    let command_line = command_line(&cmd);
+    control.register(id, child.id());
+
+    // Drain stderr so ffmpeg can never block on a full pipe.
+    let stderr_tail = Arc::new(Mutex::new(VecDeque::<String>::new()));
+    let stderr_reader = {
+        let tail = Arc::clone(&stderr_tail);
+        let stderr = child.stderr.take();
+        thread::spawn(move || {
+            if let Some(err) = stderr {
+                let reader = BufReader::new(err);
+                for line in reader.lines().map_while(Result::ok) {
+                    if line.trim().is_empty() {
+                        continue;
+                    }
+                    // SVT-AV1 is chatty on stderr even at -loglevel error;
+                    // drop its banner noise so real errors stay in the tail.
+                    if line.contains("Svt[info]") {
+                        continue;
+                    }
+                    if let Ok(mut t) = tail.lock() {
+                        t.push_back(line);
+                        while t.len() > 40 {
+                            t.pop_front();
+                        }
+                    }
+                }
+            }
+        })
+    };
+
+    let emit = |in_pass_secs: f64, speed: f64| {
+        let out_bytes = std::fs::metadata(out_path).map(|m| m.len()).unwrap_or(0);
+        let _ = tx.send(Ev::JobProgress { id, out_secs: progress_secs(duration_secs, &spec, in_pass_secs), speed, out_bytes });
+    };
+
+    let mut last_emit = Instant::now();
+    let mut reached = 0.0f64;
+    let mut speed = 0.0f64;
+    let mut cancelled = false;
+
+    if let Some(stdout) = child.stdout.take() {
+        let reader = BufReader::new(stdout);
+        for line in reader.lines() {
+            let Ok(line) = line else { break };
+            let Some((key, value)) = line.split_once('=') else {
+                continue;
+            };
+            match key.trim() {
+                "out_time_us" => {
+                    if let Ok(us) = value.trim().parse::<i64>() {
+                        reached = (us as f64 / 1_000_000.0).max(0.0);
+                    }
+                }
+                "speed" => {
+                    speed = value.trim().trim_end_matches('x').parse().unwrap_or(0.0);
+                }
+                "progress" => {
+                    if control.is_cancelled() {
+                        cancelled = true;
+                        control.cancel();
+                    }
+                    if last_emit.elapsed() >= Duration::from_millis(180) {
+                        last_emit = Instant::now();
+                        emit(reached, speed);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let status = child.wait().context("waiting for ffmpeg")?;
+    let _ = stderr_reader.join();
+    control.unregister(id);
+    // End the pass at its slice's end, even if ffmpeg printed no progress.
+    emit(if status.success() { duration_secs } else { reached }, speed);
+
+    let stderr_tail = stderr_tail.lock().map(|t| t.iter().cloned().collect()).unwrap_or_default();
+    Ok(PassOutcome { pass: spec.pass, status, command_line, stderr_tail, reached_secs: reached, speed, cancelled })
 }
 
 fn rejected(job: &MediaInfo, final_path: &Path, encode_secs: f64, note: String) -> JobResult {
@@ -639,8 +845,62 @@ fn summarize_stderr(tail: &[String]) -> String {
         let l = line.to_ascii_lowercase();
         (l.contains("error") || l.contains("unable") || l.contains("no space") || l.contains("invalid") || l.contains("denied") || l.contains("cannot")) && !l.contains("conversion failed")
     });
-    let chosen = specific.or_else(|| tail.iter().rev().find(|l| !l.trim().is_empty())).map(|s| s.trim()).unwrap_or("no error output from ffmpeg");
-    truncate(chosen, 300)
+    let chosen = specific.or_else(|| tail.iter().rev().find(|l| !l.trim().is_empty())).map(|s| s.as_str()).unwrap_or("no error output from ffmpeg");
+    truncate(&strip_log_prefixes(chosen), 300)
+}
+
+/// Drop the `[demuxer @ 0000021e421007c0] ` context tags ffmpeg puts in front of
+/// its log lines. They carry no information for the user, and the addresses make
+/// the same error look different from one run to the next.
+fn strip_log_prefixes(line: &str) -> String {
+    let mut out = String::new();
+    let mut rest = line;
+    while let Some(open) = rest.find('[') {
+        let Some(close_rel) = rest[open..].find(']') else { break };
+        let close = open + close_rel;
+        let tag = &rest[open..=close];
+        // Only drop ffmpeg context tags (`[x @ 0000...]`); keep real text that
+        // happens to be bracketed, e.g. a message quoting `[0:0]`.
+        if tag.contains(" @ ") {
+            out.push_str(&rest[..open]);
+        } else {
+            out.push_str(&rest[..=close]);
+        }
+        rest = &rest[close + 1..];
+    }
+    out.push_str(rest);
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Does this stderr tail mean the *source* is damaged (truncated download,
+/// bit rot) rather than the encode setup being wrong? Those failures deserve a
+/// different sentence in the UI: nothing about the settings will fix them.
+fn looks_like_damaged_source(tail: &[String]) -> bool {
+    const MARKERS: [&str; 9] = [
+        "invalid nal unit size",
+        "error splitting the input into nal units",
+        "decoding error",
+        "error while decoding stream",
+        "error submitting packet to decoder",
+        "invalid data found when processing input",
+        "number of bands",
+        "reserved bit set",
+        "moov atom not found",
+    ];
+    tail.iter().any(|line| {
+        let l = line.to_ascii_lowercase();
+        MARKERS.iter().any(|m| l.contains(m))
+    })
+}
+
+/// Does this stderr tail say the target container cannot hold the copied audio
+/// codec? That is the one new failure mode of copying instead of re-encoding.
+fn looks_like_audio_mux_rejection(tail: &[String]) -> bool {
+    const MARKERS: [&str; 3] = ["could not find tag for codec", "codec not currently supported in container", "not currently supported in container"];
+    tail.iter().any(|line| {
+        let l = line.to_ascii_lowercase();
+        MARKERS.iter().any(|m| l.contains(m))
+    })
 }
 
 fn kill_pid(pid: u32) {
@@ -659,6 +919,179 @@ fn kill_pid(pid: u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn opts(two_pass: bool) -> EncodeOpts {
+        let cfg = Config { two_pass, bitrate_threshold_kbps: 2000, ..Config::default() };
+        EncodeOpts::from_config(&cfg)
+    }
+
+    fn media() -> MediaInfo {
+        MediaInfo {
+            path: PathBuf::from(r"E:\Po\clip.mp4"),
+            size_bytes: 900 * 1024 * 1024,
+            duration_secs: 60.0,
+            bitrate_bps: 30_000_000,
+            video_bitrate_bps: Some(29_000_000),
+            width: 1920,
+            height: 1080,
+            fps: 29.97,
+            vcodec: "h264".into(),
+            acodec: "aac".into(),
+            audio_channels: 2,
+            audio_streams: 1,
+            has_video: true,
+        }
+    }
+
+    fn arg_after(args: &[String], flag: &str) -> Option<String> {
+        args.iter().position(|a| a == flag).and_then(|i| args.get(i + 1)).cloned()
+    }
+
+    fn args_of(opts: &EncodeOpts, pass: Option<u8>) -> Vec<String> {
+        args_with_audio(opts, pass, AudioMode::Reencode)
+    }
+
+    fn args_with_audio(opts: &EncodeOpts, pass: Option<u8>, audio: AudioMode) -> Vec<String> {
+        let cmd = encode_command(opts, &media(), pass, Path::new("tmp/vqc-pass"), Path::new("tmp/out.mp4"), Container::Mp4, audio);
+        cmd.get_args().map(|a| a.to_string_lossy().to_string()).collect()
+    }
+
+    #[test]
+    fn two_pass_analysis_targets_vbr_and_writes_nothing() {
+        let o = opts(true);
+        let args = args_of(&o, Some(1));
+        // SVT-AV1 refuses multi-pass in CRF mode, so pass 1 must be VBR too.
+        assert_eq!(arg_after(&args, "-b:v").as_deref(), Some("1500k"), "75% of the 2000 kbps threshold");
+        assert!(!args.iter().any(|a| a == "-crf"), "pass 1 must not ask for CRF: {args:?}");
+        assert_eq!(arg_after(&args, "-pass:v").as_deref(), Some("1"));
+        assert_eq!(arg_after(&args, "-passlogfile").as_deref(), Some("tmp/vqc-pass"));
+        // Analysis only: output is discarded and no audio is encoded.
+        assert_eq!(arg_after(&args, "-f").as_deref(), Some("null"));
+        assert!(!args.iter().any(|a| a == "-c:a"), "pass 1 must skip the audio stream: {args:?}");
+    }
+
+    #[test]
+    fn two_pass_encode_uses_the_same_stats_and_the_real_output() {
+        let o = opts(true);
+        let args = args_of(&o, Some(2));
+        assert_eq!(arg_after(&args, "-b:v").as_deref(), Some("1500k"));
+        assert_eq!(arg_after(&args, "-pass:v").as_deref(), Some("2"));
+        assert_eq!(arg_after(&args, "-passlogfile").as_deref(), Some("tmp/vqc-pass"), "both passes must share the stats file");
+        assert_eq!(arg_after(&args, "-f").as_deref(), Some("mp4"));
+        assert_eq!(arg_after(&args, "-c:a").as_deref(), Some("aac"), "audio is re-encoded by default");
+        assert_eq!(arg_after(&args, "-b:a").as_deref(), Some("160k"), "the configured audio bitrate");
+        assert_eq!(arg_after(&args, "-ac").as_deref(), Some("2"), "the configured channel count");
+    }
+
+    #[test]
+    fn fallback_audio_is_stream_copied_untouched() {
+        let o = opts(true);
+        let args = args_with_audio(&o, Some(2), AudioMode::Copy);
+        assert_eq!(arg_after(&args, "-c:a").as_deref(), Some("copy"));
+        // No decode, no re-encode: the audio encoder options must be gone.
+        assert!(!args.iter().any(|a| a == "-b:a" || a == "-ac"), "copy must not re-encode: {args:?}");
+        // The fallback changes nothing about the video encode.
+        assert_eq!(arg_after(&args, "-b:v").as_deref(), Some("1500k"));
+        assert_eq!(arg_after(&args, "-pass:v").as_deref(), Some("2"));
+    }
+
+    #[test]
+    fn audio_bitrate_zero_means_copy_from_the_start() {
+        let mut o = opts(true);
+        assert_eq!(base_audio_mode(&o), AudioMode::Reencode);
+        o.audio_bitrate_kbps = 0;
+        assert_eq!(base_audio_mode(&o), AudioMode::Copy, "0 kbit/s = never re-encode");
+    }
+
+    #[test]
+    fn the_audio_fallback_only_fires_for_a_failed_encode_pass() {
+        // The encode pass failing is the case worth one retry.
+        assert!(should_retry_with_copied_audio(Some(2), false, false));
+        assert!(should_retry_with_copied_audio(None, false, false), "single-pass CRF has no pass number");
+        // Pass 1 only reads video: audio cannot be the reason it failed.
+        assert!(!should_retry_with_copied_audio(Some(1), false, false));
+        // Success and cancellation are not failures to recover from.
+        assert!(!should_retry_with_copied_audio(Some(2), false, true));
+        assert!(!should_retry_with_copied_audio(Some(2), true, false));
+    }
+
+    #[test]
+    fn single_pass_stays_on_crf() {
+        let o = opts(false);
+        let args = args_of(&o, None);
+        assert_eq!(arg_after(&args, "-crf").as_deref(), Some("35"));
+        assert!(!args.iter().any(|a| a == "-pass:v" || a == "-b:v"), "single pass must not use -pass:v/-b:v: {args:?}");
+        assert_eq!(arg_after(&args, "-f").as_deref(), Some("mp4"));
+    }
+
+    #[test]
+    fn pass_flags_are_video_scoped() {
+        // A bare `-pass 2` is a codec option for *every* output stream, so the
+        // audio encoder would look for a stats file of its own and fail.
+        let o = opts(true);
+        for pass in [1u8, 2] {
+            let args = args_of(&o, Some(pass));
+            let want = pass.to_string();
+            assert!(!args.iter().any(|a| a == "-pass"), "pass {pass} must not set a stream-agnostic -pass: {args:?}");
+            assert_eq!(arg_after(&args, "-pass:v").as_deref(), Some(want.as_str()));
+        }
+    }
+
+    #[test]
+    fn single_pass_clamps_the_output_bitrate() {
+        let mut o = opts(false);
+        assert_eq!(o.max_bitrate_kbps, 2000, "2000 kbit/s by default");
+        let args = args_of(&o, None);
+        assert_eq!(arg_after(&args, "-maxrate").as_deref(), Some("2000k"));
+        assert_eq!(arg_after(&args, "-bufsize").as_deref(), Some("4000k"), "2x the cap");
+
+        // 0 = no ceiling at all.
+        o.max_bitrate_kbps = 0;
+        let args = args_of(&o, None);
+        assert!(!args.iter().any(|a| a == "-maxrate" || a == "-bufsize"), "no cap must add no flags: {args:?}");
+    }
+
+    #[test]
+    fn two_pass_never_passes_maxrate() {
+        // SVT-AV1 hard-fails on -maxrate in VBR mode ("Max Bitrate only
+        // supported with CRF mode"), and two-pass always runs VBR.
+        let o = opts(true);
+        assert_eq!(o.max_bitrate_kbps, 2000);
+        for pass in [Some(1u8), Some(2)] {
+            let args = args_of(&o, pass);
+            assert!(!args.iter().any(|a| a == "-maxrate" || a == "-bufsize"), "pass {pass:?} must not clamp: {args:?}");
+        }
+    }
+
+    #[test]
+    fn passing_progress_is_monotonic_across_passes() {
+        let dur = 100.0;
+        let single = SINGLE_PASS_LAYOUT[0];
+        assert_eq!(progress_secs(dur, &single, 0.0), 0.0);
+        assert_eq!(progress_secs(dur, &single, 50.0), 50.0);
+        assert_eq!(progress_secs(dur, &single, 100.0), 100.0);
+
+        let (p1, p2) = (TWO_PASS_LAYOUT[0], TWO_PASS_LAYOUT[1]);
+        // Pass 1 only fills its slice, pass 2 continues from there to the end.
+        assert_eq!(progress_secs(dur, &p1, dur), p1.share * dur);
+        assert_eq!(progress_secs(dur, &p2, 0.0), p1.share * dur);
+        assert_eq!(progress_secs(dur, &p2, dur), dur);
+        assert!(progress_secs(dur, &p1, 60.0) < progress_secs(dur, &p2, 0.0));
+    }
+
+    #[test]
+    fn two_pass_target_sits_below_the_threshold() {
+        let mut cfg = Config { two_pass: true, ..Config::default() };
+        assert!(cfg.two_pass, "two-pass is on by default");
+        assert!(Config::default().two_pass, "two-pass is on by default");
+        cfg.bitrate_threshold_kbps = 2000;
+        assert_eq!(cfg.two_pass_target_kbps(), 1500);
+        cfg.bitrate_threshold_kbps = 100;
+        assert_eq!(cfg.two_pass_target_kbps(), 75);
+        // Never degenerate into a zero target.
+        cfg.bitrate_threshold_kbps = 0;
+        assert_eq!(cfg.two_pass_target_kbps(), 32);
+    }
 
     fn result(outcome: Outcome, old: u64, new: u64) -> JobResult {
         JobResult {
@@ -770,6 +1203,54 @@ mod stderr_tests {
         let tail = vec!["some warning".to_string(), "moov atom not found".to_string()];
         assert_eq!(summarize_stderr(&tail), "moov atom not found");
         assert!(summarize_stderr(&[]).contains("no error output"));
+    }
+
+    #[test]
+    fn strips_ffmpeg_context_tags_and_addresses() {
+        let line = "[vist#0:0/h264 @ 0000021e421007c0] [dec:h264 @ 0000021e421001c0] Decoding error: Invalid data found when processing input";
+        assert_eq!(strip_log_prefixes(line), "Decoding error: Invalid data found when processing input");
+        assert_eq!(strip_log_prefixes("[out#0/mp4 @ 0x5571c0] Nothing was written into output file."), "Nothing was written into output file.");
+        // Text that merely contains brackets survives untouched.
+        assert_eq!(strip_log_prefixes("stream [0:0] failed"), "stream [0:0] failed");
+        assert_eq!(strip_log_prefixes("Conversion failed!"), "Conversion failed!");
+    }
+
+    #[test]
+    fn recognizes_a_damaged_source() {
+        // The real-world case: an .m4v whose bitstream is destroyed at 91%.
+        let user = vec![
+            "[h264 @ 0000] Error splitting the input into NAL units.".to_string(),
+            "[h264 @ 0000] Invalid NAL unit size (-472513162 > 40463).".to_string(),
+            "[aac @ 0000] Number of bands (19) exceeds limit (10).".to_string(),
+        ];
+        assert!(looks_like_damaged_source(&user));
+        assert!(looks_like_damaged_source(&["[mov] moov atom not found".to_string()]));
+
+        // Setup failures must not be blamed on the file.
+        for line in ["No space left on device", "Permission denied", "Unknown encoder 'libsvtav1'", "Error opening output files: I/O error", "ERROR: Invalid pattern"] {
+            assert!(!looks_like_damaged_source(&[line.to_string()]), "{line}");
+        }
+        assert!(!looks_like_damaged_source(&[]));
+    }
+
+    #[test]
+    fn damaged_source_summary_is_readable() {
+        let tail = vec![
+            "[vist#0:0/h264 @ 0000021e421007c0] [dec:h264 @ 0000021e421001c0] Decoding error: Invalid data found when processing input".to_string(),
+            "    Last message repeated 10 times".to_string(),
+        ];
+        let s = summarize_stderr(&tail);
+        assert_eq!(s, "Decoding error: Invalid data found when processing input");
+        assert!(!s.contains("0000"), "addresses must not leak into the row: {s}");
+        assert!(looks_like_damaged_source(&tail));
+    }
+
+    #[test]
+    fn recognizes_audio_the_container_cannot_hold() {
+        let tail = vec!["[mp4 @ 0000] Could not find tag for codec vorbis in stream #1, codec not currently supported in container".to_string()];
+        assert!(looks_like_audio_mux_rejection(&tail));
+        assert!(!looks_like_audio_mux_rejection(&["[h264 @ 0] Invalid NAL unit size (1 > 2).".to_string()]));
+        assert!(!looks_like_audio_mux_rejection(&[]));
     }
 
     #[test]

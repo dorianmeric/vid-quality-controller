@@ -76,7 +76,8 @@ pub fn run(cfg: Config, scan_only: bool) -> Result<()> {
     if cfg.dry_run {
         println!("DRY RUN — originals will not be touched");
     }
-    println!("encoder: libsvtav1 crf{} preset{} {} · AAC {}k {}ch · {} workers\n", cfg.crf, cfg.preset, cfg.pix_fmt, cfg.audio_bitrate_kbps, cfg.audio_channels, cfg.parallelism);
+    let video = if cfg.two_pass { format!("{} (VBR)", cfg.video_mode()) } else { cfg.video_mode() };
+    println!("encoder: libsvtav1 {video} preset{} {} · AAC {}k {}ch (copied if the encode fails) · {} workers\n", cfg.preset, cfg.pix_fmt, cfg.audio_bitrate_kbps, cfg.audio_channels, cfg.parallelism);
 
     let opts = EncodeOpts::from_config(&cfg);
     let total = candidates.len();

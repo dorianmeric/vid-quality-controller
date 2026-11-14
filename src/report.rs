@@ -47,8 +47,16 @@ pub fn write(results: &[JobResult], cfg: &Config) -> PathBuf {
 
     let _ = writeln!(txt, "Video Quality Controller report — {stamp}");
     let _ = writeln!(txt, "root: {}", cfg.root.display());
-    let _ =
-        writeln!(txt, "preset: AV1/SVT crf{} preset{} {} · AAC {}k {}ch · threshold {} kbps", cfg.crf, cfg.preset, cfg.pix_fmt, cfg.audio_bitrate_kbps, cfg.audio_channels, cfg.bitrate_threshold_kbps);
+    let _ = writeln!(
+        txt,
+        "preset: AV1/SVT {} preset{} {} · AAC {}k {}ch · threshold {} kbps",
+        cfg.video_mode(),
+        cfg.preset,
+        cfg.pix_fmt,
+        cfg.audio_bitrate_kbps,
+        cfg.audio_channels,
+        cfg.bitrate_threshold_kbps
+    );
     let _ = writeln!(txt, "processed {} · replaced {} · rejected {} · failed {} · cancelled {}", results.len(), replaced, rejected, failed, cancelled);
     let _ = writeln!(
         txt,

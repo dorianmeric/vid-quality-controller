@@ -692,6 +692,8 @@ pub enum Field {
     Threshold,
     MinSize,
     Crf,
+    MaxBitrate,
+    TwoPass,
     Preset,
     AudioKbps,
     AudioChannels,
@@ -705,11 +707,13 @@ pub enum Field {
 }
 
 impl Field {
-    pub const ALL: [Field; 14] = [
+    pub const ALL: [Field; 16] = [
         Field::Root,
         Field::Threshold,
         Field::MinSize,
         Field::Crf,
+        Field::MaxBitrate,
+        Field::TwoPass,
         Field::Preset,
         Field::AudioKbps,
         Field::AudioChannels,
@@ -728,6 +732,8 @@ impl Field {
             Field::Threshold => "Bitrate threshold (kbps)",
             Field::MinSize => "Min file size (MB)",
             Field::Crf => "AV1 CRF (quality)",
+            Field::MaxBitrate => "Max output bitrate (kbps)",
+            Field::TwoPass => "Two-pass VBR encode",
             Field::Preset => "SVT-AV1 preset (0-13)",
             Field::AudioKbps => "Audio bitrate (kbps)",
             Field::AudioChannels => "Audio channels",
@@ -747,9 +753,11 @@ impl Field {
             Field::Threshold => "total bitrate above this = candidate",
             Field::MinSize => "smaller files are ignored",
             Field::Crf => "lower = better quality, bigger file",
+            Field::MaxBitrate => "0 = no cap · crf mode only",
+            Field::TwoPass => "vbr at 75% of thr; no crf",
             Field::Preset => "higher = faster, bigger file",
-            Field::AudioKbps => "AAC target bitrate",
-            Field::AudioChannels => "2 = stereo",
+            Field::AudioKbps => "AAC target; 0 = copy as-is",
+            Field::AudioChannels => "2 = stereo; unused when copying",
             Field::Parallel => "ffmpeg processes at once",
             Field::ProbeParallel => "ffprobe processes at once",
             Field::Tolerance => "max allowed length difference",
@@ -761,7 +769,7 @@ impl Field {
     }
 
     pub fn is_bool(self) -> bool {
-        matches!(self, Field::SkipAv1 | Field::Faststart | Field::DryRun | Field::KeepBackup)
+        matches!(self, Field::SkipAv1 | Field::Faststart | Field::TwoPass | Field::DryRun | Field::KeepBackup)
     }
 
     pub fn value(self, cfg: &Config) -> String {
@@ -770,6 +778,8 @@ impl Field {
             Field::Threshold => cfg.bitrate_threshold_kbps.to_string(),
             Field::MinSize => format!("{}", cfg.min_size_mb),
             Field::Crf => cfg.crf.to_string(),
+            Field::MaxBitrate => cfg.max_bitrate_kbps.to_string(),
+            Field::TwoPass => yes_no(cfg.two_pass),
             Field::Preset => cfg.preset.to_string(),
             Field::AudioKbps => cfg.audio_bitrate_kbps.to_string(),
             Field::AudioChannels => cfg.audio_channels.to_string(),
@@ -787,6 +797,7 @@ impl Field {
         match self {
             Field::SkipAv1 => cfg.skip_av1 = !cfg.skip_av1,
             Field::Faststart => cfg.faststart = !cfg.faststart,
+            Field::TwoPass => cfg.two_pass = !cfg.two_pass,
             Field::DryRun => cfg.dry_run = !cfg.dry_run,
             Field::KeepBackup => cfg.keep_backup = !cfg.keep_backup,
             _ => {}
@@ -810,8 +821,9 @@ impl Field {
                 cfg.min_size_mb = parse_num::<f64>(s, 0.0, 1_000_000.0)?;
             }
             Field::Crf => cfg.crf = parse_num::<u8>(s, 0, 63)?,
+            Field::MaxBitrate => cfg.max_bitrate_kbps = parse_num::<u32>(s, 0, 200_000)?,
             Field::Preset => cfg.preset = parse_num::<u8>(s, 0, 13)?,
-            Field::AudioKbps => cfg.audio_bitrate_kbps = parse_num::<u32>(s, 32, 512)?,
+            Field::AudioKbps => cfg.audio_bitrate_kbps = parse_num::<u32>(s, 0, 512)?,
             Field::AudioChannels => cfg.audio_channels = parse_num::<u16>(s, 1, 8)?,
             Field::Parallel => cfg.parallelism = parse_num::<usize>(s, 1, 32)?,
             Field::ProbeParallel => cfg.probe_parallelism = parse_num::<usize>(s, 1, 32)?,

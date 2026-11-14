@@ -3,7 +3,7 @@
 
 #![cfg(test)]
 
-use crate::app::{App, EncodeState, Phase, RowItem, RowStatus, Slot, SortMode, is_candidate};
+use crate::app::{App, EncodeState, Field, Phase, RowItem, RowStatus, Slot, SortMode, is_candidate};
 use crate::config::Config;
 use crate::encode::{JobResult, Outcome};
 use crate::probe::MediaInfo;
@@ -235,6 +235,10 @@ fn popups_render() {
     let text = render(&mut app);
     assert!(text.contains("Settings"), "settings missing:\n{text}");
     assert!(text.contains("Bitrate threshold"), "fields missing:\n{text}");
+    // Every field must fit the popup: a new one that does not is silently cut off.
+    assert!(text.contains("Two-pass VBR encode"), "two-pass setting missing:\n{text}");
+    assert!(text.contains("Max output bitrate (kbps)"), "max bitrate setting missing:\n{text}");
+    assert!(text.contains("Keep .vqc-backup originals"), "last field must still be visible:\n{text}");
 }
 
 #[test]
@@ -248,6 +252,52 @@ fn tiny_terminal_does_not_panic() {
             terminal.draw(|f| crate::ui::draw(f, &mut app)).unwrap();
         }
     }
+}
+
+#[test]
+fn max_bitrate_field_parses_and_accepts_zero_for_off() {
+    let field = Field::MaxBitrate;
+    assert!(!field.is_bool(), "a number is typed in, not toggled");
+    let mut cfg = Config::default();
+    assert_eq!(cfg.max_bitrate_kbps, 2000, "2000 kbit/s by default");
+    assert_eq!(field.value(&cfg), "2000");
+
+    field.apply(&mut cfg, "0").unwrap();
+    assert_eq!(cfg.max_bitrate_kbps, 0, "0 disables the ceiling");
+    field.apply(&mut cfg, " 1800 ").unwrap();
+    assert_eq!(cfg.max_bitrate_kbps, 1800);
+    assert!(field.apply(&mut cfg, "200001").is_err(), "above the sane range");
+    assert!(field.apply(&mut cfg, "lots").is_err());
+}
+
+#[test]
+fn audio_settings_keep_a_set_bitrate_and_accept_zero() {
+    let mut cfg = Config::default();
+    assert_eq!(Field::AudioKbps.value(&cfg), "160", "re-encode is the default");
+    assert_eq!(Field::AudioChannels.value(&cfg), "2");
+
+    // 0 kbit/s = never re-encode: the encoder copies the audio instead.
+    Field::AudioKbps.apply(&mut cfg, "0").unwrap();
+    assert_eq!(cfg.audio_bitrate_kbps, 0);
+    Field::AudioKbps.apply(&mut cfg, "192").unwrap();
+    assert_eq!(cfg.audio_bitrate_kbps, 192);
+    assert!(Field::AudioKbps.apply(&mut cfg, "513").is_err());
+    assert!(Field::AudioChannels.apply(&mut cfg, "3").is_ok());
+    assert!(Field::AudioChannels.apply(&mut cfg, "0").is_err());
+}
+
+#[test]
+fn two_pass_setting_is_a_toggle_that_defaults_on() {
+    let field = Field::TwoPass;
+    assert!(field.is_bool(), "two-pass is edited with enter/space, not by typing");
+    let mut cfg = Config::default();
+    assert!(cfg.two_pass, "two-pass must be on by default");
+    assert_eq!(field.value(&cfg), "yes");
+    field.toggle(&mut cfg);
+    assert!(!cfg.two_pass);
+    assert_eq!(field.value(&cfg), "no");
+    field.toggle(&mut cfg);
+    assert!(cfg.two_pass);
 }
 
 #[test]
