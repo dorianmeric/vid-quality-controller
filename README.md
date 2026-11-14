@@ -40,8 +40,10 @@ The app finds it on `PATH` automatically.
    (default 2000 kbit/s), sorted by size, with checkboxes. You pick what to
    process. `f` also shows files that are below the threshold.
 3. **Encode** — runs N ffmpeg jobs in parallel with live per-job progress bars,
-   overall progress (`done/total`), speed, ETA and bytes saved so far. Each file
-   is encoded in two passes (analysis, then encode) at a VBR target.
+   overall progress (`done/total`), speed, ETA and bytes saved so far, plus the
+   full ffmpeg command line of the running job along the bottom of the screen
+   (wrapped, never shortened). Each file is encoded in two passes (analysis,
+   then encode) at a VBR target.
 4. **Verify** — each result must still probe cleanly, keep a video stream, be the
    same length within tolerance, and be strictly smaller. Anything else is
    discarded and the original kept.
@@ -51,9 +53,10 @@ The app finds it on `PATH` automatically.
 6. **Report** — a before/after table plus `reports/vqc-<stamp>.csv` and `.txt`.
 7. **Log** — a full run log next to the executable, `log-YYYY-MM-DD-HHMMSS.txt`
    (named after the start time). It records the config, every scan, every job
-   with sizes/bitrates/durations/timings, and for failures the exit code, how
-   far the encode got, the exact ffmpeg command line and the ffmpeg stderr.
-   The path is shown on the summary screen.
+   with sizes/bitrates/durations/timings, the exact ffmpeg command line next to
+   each job's `start:` entry (and again for a second pass or an audio-copy
+   retry), and for failures the exit code, how far the encode got and the ffmpeg
+   stderr. The path is shown on the summary screen.
 
 ## Encode preset (defaults, all configurable in-app with `t`)
 

@@ -290,8 +290,6 @@ fn run_job(job: &MediaInfo, opts: &EncodeOpts, control: &Arc<Control>, tx: &Send
     let out_name = final_path.file_name().ok_or_else(|| anyhow!("no file name"))?.to_string_lossy().to_string();
     let out_path = tmp_dir.join(&out_name);
 
-    let _ = tx.send(Ev::JobStarted { id: job_id(&job.path), path: job.path.clone(), duration_secs: job.duration_secs, size_bytes: job.size_bytes });
-
     let result = encode_and_verify(job, opts, control, tx, &out_path, container, &final_path, t0).map_err(|mut e| {
         if e.elapsed_secs <= 0.0 {
             e.elapsed_secs = t0.elapsed().as_secs_f64();
@@ -323,6 +321,13 @@ fn encode_and_verify(
     // it. Single-pass CRF is just a one-entry layout.
     let layout: &[PassSpec] = if opts.two_pass { &TWO_PASS_LAYOUT } else { &SINGLE_PASS_LAYOUT };
     let base_audio = base_audio_mode(opts);
+
+    // Build the first pass' command before announcing the job, so the UI and the
+    // run log can show what is actually running next to the `start:` entry.
+    let mut pending_cmd = Some(encode_command(opts, job, layout[0].pass, &passlog, out_path, container, base_audio));
+    let first_command = command_line(pending_cmd.as_ref().expect("just built"));
+    let _ = tx.send(Ev::JobStarted { id: job_id, path: job.path.clone(), duration_secs: job.duration_secs, size_bytes: job.size_bytes, command: first_command });
+
     let mut last_speed = 0.0f64;
     let mut cancelled = false;
     let mut failure: Option<PassOutcome> = None;
@@ -331,7 +336,18 @@ fn encode_and_verify(
     let mut retried_with_copy = false;
 
     for &spec in layout {
-        let cmd = encode_command(opts, job, spec.pass, &passlog, out_path, container, base_audio);
+        let cmd = match pending_cmd.take() {
+            Some(cmd) => cmd,
+            None => {
+                let cmd = encode_command(opts, job, spec.pass, &passlog, out_path, container, base_audio);
+                let note = match spec.pass {
+                    Some(n) => format!("pass {n}/{}", layout.len()),
+                    None => "next pass".to_string(),
+                };
+                let _ = tx.send(Ev::JobCommand { id: job_id, note, command: command_line(&cmd) });
+                cmd
+            }
+        };
         let mut outcome = run_pass(cmd, job.duration_secs, control, tx, job_id, out_path, spec)?;
 
         // Fallback: the audio re-encode is the one part we can cheaply give up.
@@ -342,6 +358,7 @@ fn encode_and_verify(
             retried_with_copy = true;
             let _ = std::fs::remove_file(out_path);
             let retry = encode_command(opts, job, spec.pass, &passlog, out_path, container, AudioMode::Copy);
+            let _ = tx.send(Ev::JobCommand { id: job_id, note: "retry with the audio copied".into(), command: command_line(&retry) });
             outcome = run_pass(retry, job.duration_secs, control, tx, job_id, out_path, spec)?;
             audio_copied = outcome.status.success() && !outcome.cancelled;
         }

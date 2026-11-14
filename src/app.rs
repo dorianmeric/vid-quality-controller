@@ -73,11 +73,13 @@ pub struct Slot {
     pub src_bytes: u64,
     /// When this job actually started encoding, for the per-file ETA.
     pub started: Option<Instant>,
+    /// Full ffmpeg command line of the pass this worker is currently running.
+    pub command: String,
 }
 
 impl Slot {
     fn empty() -> Self {
-        Self { id: None, name: String::new(), frac: 0.0, speed: 0.0, out_bytes: 0, dur: 0.0, src_bytes: 0, started: None }
+        Self { id: None, name: String::new(), frac: 0.0, speed: 0.0, out_bytes: 0, dur: 0.0, src_bytes: 0, started: None, command: String::new() }
     }
 
     /// Estimated seconds left for *this file*: assume the work done so far
@@ -130,6 +132,12 @@ impl EncodeState {
 
     pub fn saved_bytes(&self) -> i64 {
         self.results.iter().map(|r| r.saved_bytes()).sum()
+    }
+
+    /// Full ffmpeg command line of the job currently being encoded (the first
+    /// busy worker's), with its file name. `None` when nothing is running.
+    pub fn active_command(&self) -> Option<(&str, &str)> {
+        self.slots.iter().find(|s| s.id.is_some() && !s.command.is_empty()).map(|s| (s.name.as_str(), s.command.as_str()))
     }
 }
 
@@ -296,17 +304,24 @@ impl App {
                     self.log.line(&format!("scan error: {err}"));
                 }
             }
-            Ev::JobStarted { id, path, duration_secs, size_bytes } => {
-                if let Some(enc) = &mut self.enc {
-                    let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-                    if let Some(slot) = enc.slots.iter_mut().find(|s| s.id.is_none()) {
-                        *slot = Slot { id: Some(id), name, frac: 0.0, speed: 0.0, out_bytes: 0, dur: duration_secs, src_bytes: size_bytes, started: Some(Instant::now()) };
-                    }
+            Ev::JobStarted { id, path, duration_secs, size_bytes, command } => {
+                let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                if let Some(enc) = &mut self.enc
+                    && let Some(slot) = enc.slots.iter_mut().find(|s| s.id.is_none())
+                {
+                    *slot = Slot { id: Some(id), name, frac: 0.0, speed: 0.0, out_bytes: 0, dur: duration_secs, src_bytes: size_bytes, started: Some(Instant::now()), command: command.clone() };
                 }
                 if let Some(row) = self.rows.iter_mut().find(|r| r.info.path == path) {
                     row.status = RowStatus::Running;
                 }
                 self.log.line(&format!("start: {}", path.display()));
+                self.log.line(&format!("  command: {command}"));
+            }
+            Ev::JobCommand { id, note, command } => {
+                if let Some(slot) = self.enc.as_mut().and_then(|enc| enc.slots.iter_mut().find(|s| s.id == Some(id))) {
+                    slot.command = command.clone();
+                }
+                self.log.line(&format!("  {note}: {command}"));
             }
             Ev::JobProgress { id, out_secs, speed, out_bytes } => {
                 if let Some(slot) = self.enc.as_mut().and_then(|enc| enc.slots.iter_mut().find(|s| s.id == Some(id))) {

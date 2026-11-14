@@ -21,7 +21,15 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         Phase::Encoding => (5 + app.cfg.parallelism.max(1) as u16).min(14),
         _ => 6,
     };
-    let chunks = Layout::vertical([Constraint::Length(5), Constraint::Min(4), Constraint::Length(panel_h), Constraint::Length(1)]).split(f.area());
+    // During encoding a full (untruncated) ffmpeg command line sits above the
+    // key hints, so you can see exactly what is running.
+    let cmd_h = if app.phase == Phase::Encoding { command_height(app, f.area(), panel_h) } else { 0 };
+    let mut constraints = vec![Constraint::Length(5), Constraint::Min(4), Constraint::Length(panel_h)];
+    if cmd_h > 0 {
+        constraints.push(Constraint::Length(cmd_h));
+    }
+    constraints.push(Constraint::Length(1));
+    let chunks = Layout::vertical(constraints).split(f.area());
 
     draw_header(f, chunks[0], app);
     match app.phase {
@@ -31,7 +39,11 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         Phase::Summary => draw_summary_body(f, chunks[1], app),
     }
     draw_panel(f, chunks[2], app);
-    draw_footer(f, chunks[3], app);
+    let footer = chunks.len() - 1;
+    if cmd_h > 0 {
+        draw_command(f, chunks[footer - 1], app);
+    }
+    draw_footer(f, chunks[footer], app);
 
     if app.confirm {
         draw_confirm(f, f.area(), app);
@@ -215,8 +227,10 @@ fn draw_encode_body(f: &mut Frame, area: Rect, app: &App) {
     };
 
     let mut lines: Vec<Line> = Vec::new();
-    let recent: Vec<&crate::encode::JobResult> = enc.results.iter().rev().take(inner.height as usize).collect();
-    for r in recent {
+    // Newest at the bottom: keep the tail of the list in completion order.
+    let room = inner.height as usize;
+    let skip = enc.results.len().saturating_sub(room);
+    for r in enc.results.iter().skip(skip) {
         let (tag, color) = match r.outcome {
             Outcome::Replaced => ("replaced", GOOD),
             Outcome::DryRun => ("dry-run ", GOOD),
@@ -230,16 +244,17 @@ fn draw_encode_body(f: &mut Frame, area: Rect, app: &App) {
             format!("kept {}", fmt::bytes(r.old_size))
         };
         // Failures and rejections carry the reason; show it at the end of the row.
+        let path = display_path(&r.path);
         let reason = if r.outcome.is_success() || r.note.is_empty() {
             String::new()
         } else {
-            let used = 9 + 38 + 2 + saved.chars().count();
+            let used = 9 + path.chars().count() + 2 + saved.chars().count();
             let room = (inner.width as usize).saturating_sub(used + 4);
             if room < 8 { String::new() } else { format!("  ·  {}", truncate(&r.note, room)) }
         };
         lines.push(Line::from(vec![
             Span::styled(format!("[{tag}] "), Style::new().fg(color)),
-            Span::styled(truncate(&file_name(&r.path), 38), Style::new().fg(Color::Rgb(200, 200, 210))),
+            Span::styled(path, Style::new().fg(Color::Rgb(200, 200, 210))),
             Span::raw("  "),
             Span::styled(saved, Style::new().fg(DIM)),
             Span::styled(reason, Style::new().fg(color)),
@@ -520,6 +535,36 @@ fn draw_summary_panel(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(Paragraph::new(lines), inner);
 }
 
+// ---------------------------------------------------------------- command line
+
+/// Rows the current command needs, capped so the rest of the screen survives.
+fn command_height(app: &App, area: Rect, panel_h: u16) -> u16 {
+    let needed = command_rows(app, area.width).len() as u16;
+    // Header (5) + progress panel + footer (1) + a few rows for the result list.
+    let max = area.height.saturating_sub(5 + panel_h + 1 + 3).max(1);
+    needed.min(max).max(1)
+}
+
+/// The bottom ffmpeg line: the full command of the job being encoded, wrapped
+/// hard (never elided) so every argument stays readable.
+fn command_rows(app: &App, width: u16) -> Vec<String> {
+    let text = match app.enc.as_ref().and_then(|enc| enc.active_command()) {
+        Some((name, cmd)) => format!("{name} › {cmd}"),
+        None => "waiting for the next ffmpeg job…".to_string(),
+    };
+    hard_wrap(&text, width as usize)
+}
+
+fn draw_command(f: &mut Frame, area: Rect, app: &App) {
+    let lines: Vec<Line> = command_rows(app, area.width)
+        .into_iter()
+        .take(area.height as usize)
+        .enumerate()
+        .map(|(i, row)| Line::from(Span::styled(row, Style::new().fg(if i == 0 { Color::Rgb(175, 180, 200) } else { Color::Rgb(140, 145, 160) }))))
+        .collect();
+    f.render_widget(Paragraph::new(lines), area);
+}
+
 // ---------------------------------------------------------------- footer
 
 fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
@@ -655,6 +700,48 @@ fn truncate(s: &str, max: usize) -> String {
     }
 }
 
-fn file_name(p: &std::path::Path) -> String {
-    p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| p.display().to_string())
+/// Split `text` into rows of at most `width` characters. Used for the command
+/// line, which is shown in full: the terminal wraps it instead of us cutting it.
+fn hard_wrap(text: &str, width: usize) -> Vec<String> {
+    let width = width.max(1);
+    let chars: Vec<char> = text.chars().collect();
+    if chars.is_empty() {
+        return vec![String::new()];
+    }
+    chars.chunks(width).map(|c| c.iter().collect()).collect()
+}
+
+/// Longest folder part and file name shown in the in-progress list, in
+/// characters. Short paths are shown as they are.
+const FOLDER_MAX: usize = 100;
+const NAME_MAX: usize = 200;
+
+/// Full path for the in-progress list. Only the parts that are actually too long
+/// are shortened: the folder past 100 characters (its tail is kept, that is the
+/// part next to the file) and the file name past 200.
+fn display_path(p: &std::path::Path) -> String {
+    let full = p.display().to_string();
+    let Some(name) = p.file_name() else {
+        return shorten_start(&full, FOLDER_MAX);
+    };
+    let name_chars = name.to_string_lossy().chars().count();
+    let chars: Vec<char> = full.chars().collect();
+    if name_chars >= chars.len() {
+        return truncate(&full, NAME_MAX);
+    }
+    let split = chars.len() - name_chars;
+    let folder: String = chars[..split].iter().collect();
+    let name: String = chars[split..].iter().collect();
+    format!("{}{}", shorten_start(&folder, FOLDER_MAX), truncate(&name, NAME_MAX))
+}
+
+/// Cut from the front, keeping the tail of the path in view.
+fn shorten_start(s: &str, max: usize) -> String {
+    let count = s.chars().count();
+    if count <= max {
+        return s.to_string();
+    }
+    let mut out = String::from("…");
+    out.extend(s.chars().skip(count - max + 1));
+    out
 }

@@ -6,6 +6,7 @@
 use crate::app::{App, EncodeState, Field, Phase, RowItem, RowStatus, Slot, SortMode, is_candidate};
 use crate::config::Config;
 use crate::encode::{JobResult, Outcome};
+use crate::event::Ev;
 use crate::probe::MediaInfo;
 use crossbeam_channel::unbounded;
 use ratatui::Terminal;
@@ -118,8 +119,8 @@ fn encoding_screen_renders() {
         completed: 1,
         started: Instant::now(),
         slots: vec![
-            Slot { id: Some(7), name: "b.mp4".into(), frac: 0.42, speed: 3.5, out_bytes: 10 * 1024 * 1024, dur: 130.0, src_bytes: 40 * 1024 * 1024, started: Some(Instant::now()) },
-            Slot { id: None, name: String::new(), frac: 0.0, speed: 0.0, out_bytes: 0, dur: 0.0, src_bytes: 0, started: None },
+            Slot { id: Some(7), name: "b.mp4".into(), frac: 0.42, speed: 3.5, out_bytes: 10 * 1024 * 1024, dur: 130.0, src_bytes: 40 * 1024 * 1024, started: Some(Instant::now()), command: String::new() },
+            Slot { id: None, name: String::new(), frac: 0.0, speed: 0.0, out_bytes: 0, dur: 0.0, src_bytes: 0, started: None, command: String::new() },
         ],
         results: vec![JobResult {
             path: PathBuf::from("E:\\Po\\folder\\a.mp4"),
@@ -147,6 +148,69 @@ fn encoding_screen_renders() {
     assert!(text.contains("replaced"), "recent result missing:\n{text}");
 }
 
+const LONG_CMD: &str = concat!(
+    "C:\\P\\ffmpeg\\bin\\ffmpeg.exe -hide_banner -nostdin -y -loglevel error -progress pipe:1 -nostats ",
+    "-i E:\\Po\\folder\\a.mp4 -map 0:v:0 -map 0:a? -map_metadata 0 -c:v libsvtav1 -b:v 1500k -preset 6 ",
+    "-pix_fmt yuv420p -pass:v 2 -passlogfile .vqc-tmp-42-abc\\vqc-pass -c:a aac -b:a 160k -ac 2 ",
+    "-movflags +faststart -f mp4 .vqc-tmp-42-abc\\a.mp4",
+);
+
+fn encoding_app_with_command(cmd: &str) -> App {
+    let mut app = test_app();
+    app.phase = Phase::Encoding;
+    app.enc = Some(EncodeState {
+        total: 1,
+        completed: 0,
+        started: Instant::now(),
+        slots: vec![Slot {
+            id: Some(7),
+            name: "a.mp4".into(),
+            frac: 0.1,
+            speed: 1.0,
+            out_bytes: 0,
+            dur: 120.0,
+            src_bytes: 0,
+            started: Some(Instant::now()),
+            command: cmd.into(),
+        }],
+        results: Vec::new(),
+        paused: false,
+        cancelling: false,
+        elapsed: 0.0,
+        finished: false,
+    });
+    app
+}
+
+#[test]
+fn encoding_screen_shows_the_whole_ffmpeg_command() {
+    let mut app = encoding_app_with_command(LONG_CMD);
+    let text = render(&mut app);
+    // Joining the rows back together must rebuild the command exactly: it is
+    // wrapped, never elided like the gauge labels are.
+    let flat = text.replace('\n', "");
+    assert!(flat.contains(LONG_CMD), "command must be shown in full:\n{text}");
+}
+
+#[test]
+fn command_is_logged_with_the_start_entry() {
+    let dir = std::env::temp_dir().join(format!("vqc-cmd-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let mut app = encoding_app_with_command(LONG_CMD);
+    app.attach_log(crate::log::RunLog::create_in(&dir, &Config::default()));
+    let path = app.rows[0].info.path.clone();
+    app.on_event(Ev::JobStarted { id: 7, path: path.clone(), duration_secs: 120.0, size_bytes: 1024, command: LONG_CMD.into() });
+    app.on_event(Ev::JobCommand { id: 7, note: "pass 2/2".into(), command: "ffmpeg.exe -pass:v 2 stats".into() });
+
+    let log = std::fs::read_to_string(app.log_path().expect("log file")).unwrap();
+    assert!(log.contains(&format!("start: {}", path.display())), "start entry missing:\n{log}");
+    assert!(log.contains(&format!("command: {LONG_CMD}")), "command must be logged with the start entry:\n{log}");
+    assert!(log.contains("pass 2/2: ffmpeg.exe -pass:v 2 stats"), "later passes must be logged too:\n{log}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn failed_job_shows_its_error_in_the_row() {
     let mut app = test_app();
@@ -155,7 +219,7 @@ fn failed_job_shows_its_error_in_the_row() {
         total: 2,
         completed: 2,
         started: Instant::now(),
-        slots: vec![Slot { id: None, name: String::new(), frac: 0.0, speed: 0.0, out_bytes: 0, dur: 0.0, src_bytes: 0, started: None }],
+        slots: vec![Slot { id: None, name: String::new(), frac: 0.0, speed: 0.0, out_bytes: 0, dur: 0.0, src_bytes: 0, started: None, command: String::new() }],
         results: vec![JobResult {
             path: PathBuf::from("E:\\Po\\folder\\broken.mp4"),
             final_path: PathBuf::from("E:\\Po\\folder\\broken.mp4"),
@@ -195,7 +259,7 @@ fn summary_screen_renders() {
         total: 1,
         completed: 1,
         started: Instant::now(),
-        slots: vec![Slot { id: None, name: String::new(), frac: 0.0, speed: 0.0, out_bytes: 0, dur: 0.0, src_bytes: 0, started: None }],
+        slots: vec![Slot { id: None, name: String::new(), frac: 0.0, speed: 0.0, out_bytes: 0, dur: 0.0, src_bytes: 0, started: None, command: String::new() }],
         results: vec![JobResult {
             path: PathBuf::from("E:\\Po\\folder\\a.mp4"),
             final_path: PathBuf::from("E:\\Po\\folder\\a.mp4"),
@@ -321,7 +385,7 @@ fn candidate_rules() {
 #[test]
 fn slot_eta_uses_time_spent_on_that_file() {
     use std::time::Duration;
-    let mut slot = Slot { id: Some(1), name: "a.mp4".into(), frac: 0.5, speed: 4.0, out_bytes: 0, dur: 60.0, src_bytes: 0, started: Some(Instant::now() - Duration::from_secs(30)) };
+    let mut slot = Slot { id: Some(1), name: "a.mp4".into(), frac: 0.5, speed: 4.0, out_bytes: 0, dur: 60.0, src_bytes: 0, started: Some(Instant::now() - Duration::from_secs(30)), command: String::new() };
     let eta = slot.eta_secs().expect("half way there means an ETA");
     assert!((25.0..=35.0).contains(&eta), "half done after 30s should leave ~30s, got {eta}");
 
