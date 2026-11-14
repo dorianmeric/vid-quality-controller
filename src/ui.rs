@@ -719,7 +719,7 @@ const NAME_MAX: usize = 200;
 /// Full path for the in-progress list. Only the parts that are actually too long
 /// are shortened: the folder past 100 characters (its tail is kept, that is the
 /// part next to the file) and the file name past 200.
-fn display_path(p: &std::path::Path) -> String {
+pub(crate) fn display_path(p: &std::path::Path) -> String {
     let full = p.display().to_string();
     let Some(name) = p.file_name() else {
         return shorten_start(&full, FOLDER_MAX);

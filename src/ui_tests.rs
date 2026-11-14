@@ -33,6 +33,25 @@ fn media(name: &str, mb: f64, mbps: f64, codec: &str, secs: f64) -> MediaInfo {
     }
 }
 
+/// A finished job, for the in-progress / summary lists.
+fn job(path: &str, outcome: Outcome) -> JobResult {
+    JobResult {
+        path: PathBuf::from(path),
+        final_path: PathBuf::from(path),
+        outcome,
+        old_size: 900 * 1024 * 1024,
+        new_size: 300 * 1024 * 1024,
+        old_bitrate_bps: 6_500_000,
+        new_bitrate_bps: 2_100_000,
+        old_duration: 1200.0,
+        new_duration: 1200.0,
+        encode_secs: 100.0,
+        total_secs: 101.0,
+        note: String::new(),
+        detail: String::new(),
+    }
+}
+
 fn test_app() -> App {
     let (tx, _rx) = unbounded();
     let mut app = App::new(Config::default(), PathBuf::from("config.json"), None, tx);
@@ -209,6 +228,78 @@ fn command_is_logged_with_the_start_entry() {
     assert!(log.contains(&format!("command: {LONG_CMD}")), "command must be logged with the start entry:\n{log}");
     assert!(log.contains("pass 2/2: ffmpeg.exe -pass:v 2 stats"), "later passes must be logged too:\n{log}");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn in_progress_lists_the_newest_result_at_the_bottom() {
+    let mut app = test_app();
+    app.phase = Phase::Encoding;
+    app.enc = Some(EncodeState {
+        total: 3,
+        completed: 2,
+        started: Instant::now(),
+        slots: vec![Slot { id: None, name: String::new(), frac: 0.0, speed: 0.0, out_bytes: 0, dur: 0.0, src_bytes: 0, started: None, command: String::new() }],
+        results: vec![job("E:/Po/first/one.mp4", Outcome::Replaced), job("E:/Po/second/two.mp4", Outcome::Replaced)],
+        paused: false,
+        cancelling: false,
+        elapsed: 10.0,
+        finished: false,
+    });
+    let text = render(&mut app);
+    let first = text.find("one.mp4").expect("earlier result missing");
+    let second = text.find("two.mp4").expect("later result missing");
+    assert!(first < second, "the newest result must be the lower one:\n{text}");
+}
+
+#[test]
+fn in_progress_shows_full_paths_and_only_shortens_long_ones() {
+    // A folder of 101 characters must be shortened to 100, a shorter one kept.
+    let long_folder = format!("E:/Po/{}/", "x".repeat(94));
+    assert_eq!(long_folder.chars().count(), 101, "folder is one char over the limit");
+    let path = format!("{long_folder}clip.mp4");
+    let mut app = test_app();
+    app.phase = Phase::Encoding;
+    app.enc = Some(EncodeState {
+        total: 2,
+        completed: 2,
+        started: Instant::now(),
+        slots: vec![Slot { id: None, name: String::new(), frac: 0.0, speed: 0.0, out_bytes: 0, dur: 0.0, src_bytes: 0, started: None, command: String::new() }],
+        results: vec![job("E:/Po/short/kept.mp4", Outcome::Replaced), job(&path, Outcome::Replaced)],
+        paused: false,
+        cancelling: false,
+        elapsed: 10.0,
+        finished: false,
+    });
+    let text = render(&mut app);
+    assert!(text.contains("E:/Po/short/kept.mp4"), "a short path must be shown in full:\n{text}");
+    assert!(text.contains("clip.mp4"), "the file name must survive folder shortening:\n{text}");
+    assert!(text.contains('…'), "the over-long folder must be marked as shortened:\n{text}");
+    assert!(!text.contains("E:/Po/xxx"), "the folder was not shortened:\n{text}");
+}
+
+#[test]
+fn long_file_names_are_shortened_at_200_characters() {
+    let long_name = format!("{}.mp4", "n".repeat(198));
+    assert_eq!(long_name.chars().count(), 202);
+    let mut app = test_app();
+    app.phase = Phase::Encoding;
+    app.enc = Some(EncodeState {
+        total: 1,
+        completed: 1,
+        started: Instant::now(),
+        slots: vec![Slot { id: None, name: String::new(), frac: 0.0, speed: 0.0, out_bytes: 0, dur: 0.0, src_bytes: 0, started: None, command: String::new() }],
+        results: vec![job(&format!("E:/Po/{long_name}"), Outcome::Replaced)],
+        paused: false,
+        cancelling: false,
+        elapsed: 10.0,
+        finished: true,
+    });
+    let shown = crate::ui::display_path(std::path::Path::new(&format!("E:/Po/{long_name}")));
+    assert_eq!(shown.chars().count(), "E:/Po/".chars().count() + 200, "folder + a 200-char name: {shown}");
+    assert!(shown.starts_with("E:/Po/nnn"), "folder must be kept: {shown}");
+    assert!(shown.ends_with('…'), "name must be marked as shortened: {shown}");
+    // And it renders without panicking on a narrow terminal.
+    render(&mut app);
 }
 
 #[test]
