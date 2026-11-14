@@ -24,8 +24,8 @@ Prebuilt binaries are attached to every release:
 | Arch Linux | `vid-quality-controller-<ver>-1-x86_64.pkg.tar.zst` |
 
 ```bash
-sudo dpkg -i vid-quality-controller_0.1.0_amd64.deb   # Debian/Ubuntu
-sudo pacman -U vid-quality-controller-0.1.0-1-x86_64.pkg.tar.zst   # Arch
+sudo dpkg -i vid-quality-controller_1.0.0_amd64.deb   # Debian/Ubuntu
+sudo pacman -U vid-quality-controller-1.0.0-1-x86_64.pkg.tar.zst   # Arch
 ```
 
 `ffmpeg` (with `libsvtav1`) is required at runtime and is declared as a package

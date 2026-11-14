@@ -99,6 +99,7 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="${{ steps.vars.outputs.version }}"
+          mkdir -p out
           ROOT="pkg/deb"
           mkdir -p "$ROOT/DEBIAN" "$ROOT/usr/bin" "$ROOT/usr/share/doc/${BIN_NAME}"
           install -m 755 "target/${{ matrix.target }}/release/${BIN_NAME}" "$ROOT/usr/bin/${BIN_NAME}"
@@ -151,8 +152,12 @@ jobs:
           EOF
 
           command -v zstd > /dev/null || sudo apt-get install -y zstd
-          ( cd "$ROOT" && tar --owner=0 --group=0 -cf - . | zstd -q -19 -o \
-              "../out/${BIN_NAME}-${VERSION}-1-x86_64.pkg.tar.zst" )
+          mkdir -p out
+          # Run tar from the staging dir but write the archive into the repo-level
+          # out/ — a relative "../out" would resolve inside pkg/, where the
+          # artifact upload never looks (that is what broke the first release).
+          ( cd "$ROOT" && tar --owner=0 --group=0 -cf - . ) \
+            | zstd -q -19 -o "out/${BIN_NAME}-${VERSION}-1-x86_64.pkg.tar.zst"
           ls -l out
 
       - uses: actions/upload-artifact@v4

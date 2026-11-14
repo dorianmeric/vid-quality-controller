@@ -1,6 +1,6 @@
 [package]
 name = "vid-quality-controller"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2024"
 description = "TUI to find over-bitrated videos and re-encode them in place with AV1"
 
